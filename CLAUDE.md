@@ -9,8 +9,23 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Common Development Commands
 
 ### Build
+
+#### Development build
 ```bash
 go build
+```
+
+#### Build with version information
+```bash
+./build.sh
+```
+
+#### Release build (using GoReleaser)
+```bash
+# Create and push a git tag
+git tag v0.4.0
+git push origin v0.4.0
+# GitHub Actions will automatically build and release using GoReleaser
 ```
 
 ### Test boot image with QEMU

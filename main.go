@@ -5,6 +5,13 @@ import (
 	"os"
 )
 
+// Build variables - these can be set during build using ldflags
+var (
+	version   = "dev"
+	commit    = "unknown"
+	buildDate = "unknown"
+)
+
 type Runner interface {
 	Name() string
 	Run(args []string) error
@@ -30,6 +37,12 @@ func executeSubcommand(args []string) error {
 		return nil
 	}
 
+	// Check for version flag
+	if len(args) == 1 && (args[0] == "--version" || args[0] == "-v" || args[0] == "version") {
+		printVersion()
+		return nil
+	}
+
 	subcommand := args[0]
 	for _, cmd := range cmds {
 		if cmd.Name() == subcommand {
@@ -40,7 +53,7 @@ func executeSubcommand(args []string) error {
 }
 
 func printUsage() {
-	fmt.Printf(`fatimg - Create and manage FAT32 boot (EFI) partition disk images
+	fmt.Printf(`fatimg %s - Create and manage FAT32 boot (EFI) partition disk images
 
 Usage:
   fatimg <command> [arguments]
@@ -51,5 +64,14 @@ Commands:
   cp        Copy files from a disk image to a local directory
 
 Use "fatimg <command> --help" for more information about a command.
-`)
+Use "fatimg --version" to see version information.
+`, version)
+}
+
+func printVersion() {
+	fmt.Printf("fatimg version %s\n", version)
+	if commit != "unknown" && buildDate != "unknown" {
+		fmt.Printf("  commit: %s\n", commit)
+		fmt.Printf("  built:  %s\n", buildDate)
+	}
 }

@@ -5,3 +5,5 @@ dist/
 *.img
 *.gz
 /fatimg
+disks/
+test-large

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"os"
 )
@@ -24,14 +23,33 @@ func executeSubcommand(args []string) error {
 		NewCopyCommand(),
 		NewListCommand(),
 	}
-	if len(args) < 1 {
-		return errors.New("specify a subcommand: 'create', 'ls', or 'cp'")
+
+	// Check for help flag
+	if len(args) < 1 || (len(args) == 1 && (args[0] == "--help" || args[0] == "-h" || args[0] == "help")) {
+		printUsage()
+		return nil
 	}
-	subcommand := os.Args[1]
+
+	subcommand := args[0]
 	for _, cmd := range cmds {
 		if cmd.Name() == subcommand {
-			return cmd.Run(os.Args[2:])
+			return cmd.Run(args[1:])
 		}
 	}
 	return fmt.Errorf("unknown subcommand: %s", subcommand)
+}
+
+func printUsage() {
+	fmt.Printf(`fatimg - Create and manage FAT32 boot (EFI) partition disk images
+
+Usage:
+  fatimg <command> [arguments]
+
+Commands:
+  create    Create a disk image with an EFI partition
+  ls        List contents of the first partition in a disk image
+  cp        Copy files from a disk image to a local directory
+
+Use "fatimg <command> --help" for more information about a command.
+`)
 }

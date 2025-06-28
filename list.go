@@ -24,13 +24,22 @@ func NewListCommand() *ListCommand {
 	}
 	c.fs.BoolVar(&c.long, "long", false, "like ls -l, show file size and mod timestamp")
 	c.fs.Usage = func() {
-		const instruction string = `
-List first partition contents, recursively
+		fmt.Fprintf(os.Stderr, `List contents of the first partition in a disk image.
 
-`
-		fmt.Fprintf(os.Stderr, instruction)
-		fmt.Fprintf(os.Stderr, "Usage: %s [options] <path>\n", os.Args[0])
+The disk image file can optionally be gzipped, in which case fatimg
+will automatically decompress it to a temporary file.
+
+Usage:
+  fatimg ls [options] <disk-image>
+
+Options:
+`)
 		c.fs.PrintDefaults()
+		fmt.Fprintf(os.Stderr, `
+Examples:
+  fatimg ls disk.img
+  fatimg ls -long boot.img.gz
+`)
 	}
 	return c
 }
@@ -40,11 +49,20 @@ func (c *ListCommand) Name() string {
 }
 
 func (c *ListCommand) Run(args []string) error {
+	// Check for help flag before parsing
+	for _, arg := range args {
+		if arg == "--help" || arg == "-h" {
+			c.fs.Usage()
+			return nil
+		}
+	}
+
 	err := c.fs.Parse(args)
 	if err != nil {
 		return err
 	}
 	if len(c.fs.Args()) != 1 {
+		c.fs.Usage()
 		return fmt.Errorf("expected path as last argument")
 	}
 	c.imageFile = c.fs.Arg(0)

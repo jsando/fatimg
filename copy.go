@@ -21,14 +21,23 @@ func NewCopyCommand() *CopyCommand {
 		fs: flag.NewFlagSet("cp", flag.ExitOnError),
 	}
 	c.fs.Usage = func() {
-		const instruction string = `
-Copy source to dest, recursively
-Currently source must be disk image, and dest must be a folder.
+		fmt.Fprintf(os.Stderr, `Copy files from a disk image to a local directory.
 
-`
-		fmt.Fprintf(os.Stderr, instruction)
-		fmt.Fprintf(os.Stderr, "Usage: %s [options] <source-path> <dest-path>\n", os.Args[0])
+Extracts all files from the first partition of the disk image to the
+specified destination directory. The disk image file can optionally be
+gzipped, in which case fatimg will automatically decompress it.
+
+Usage:
+  fatimg cp <disk-image> <dest-directory>
+
+Options:
+`)
 		c.fs.PrintDefaults()
+		fmt.Fprintf(os.Stderr, `
+Examples:
+  fatimg cp disk.img ./extracted/
+  fatimg cp boot.img.gz /tmp/boot-contents/
+`)
 	}
 	return c
 }
@@ -38,11 +47,20 @@ func (c *CopyCommand) Name() string {
 }
 
 func (c *CopyCommand) Run(args []string) error {
+	// Check for help flag before parsing
+	for _, arg := range args {
+		if arg == "--help" || arg == "-h" {
+			c.fs.Usage()
+			return nil
+		}
+	}
+
 	err := c.fs.Parse(args)
 	if err != nil {
 		return err
 	}
 	if len(c.fs.Args()) != 2 {
+		c.fs.Usage()
 		return fmt.Errorf("expected <source> and <dest> arguments")
 	}
 	c.imageFile = c.fs.Arg(0)

@@ -37,16 +37,23 @@ func NewCreateCommand() *CreateCommand {
 	cmd.fs.BoolVar(&cmd.gzipOutput, "gzip", false, "compress output file with gzip (automatic if output ends with '.gz')")
 	cmd.fs.BoolVar(&cmd.trimImage, "trim", false, "trim disk image before compressing (truncate zero-filled sectors at the end)")
 	cmd.fs.Usage = func() {
-		const instruction string = `
-Create a disk image with an EFI partition.
+		fmt.Fprintf(os.Stderr, `Create a disk image with an EFI partition.
+
 The contents of the partition are specified as a list of one or more paths.
 Folders are copied recursively, and include the folder name itself
 unless it ends with a trailing '/'.
 
-`
-		fmt.Fprintf(os.Stderr, instruction)
-		fmt.Fprintf(os.Stderr, "Usage: %s [options] <path> [<path> ...]\n", os.Args[0])
+Usage:
+  fatimg create [options] <path> [<path> ...]
+
+Options:
+`)
 		cmd.fs.PrintDefaults()
+		fmt.Fprintf(os.Stderr, `
+Examples:
+  fatimg create --output disk.img ./boot/
+  fatimg create --output boot.img.gz --size 512 --label BOOT ./EFI/
+`)
 	}
 	return cmd
 }
@@ -56,6 +63,14 @@ func (c *CreateCommand) Name() string {
 }
 
 func (c *CreateCommand) Run(args []string) error {
+	// Check for help flag before parsing
+	for _, arg := range args {
+		if arg == "--help" || arg == "-h" {
+			c.fs.Usage()
+			return nil
+		}
+	}
+
 	err := c.fs.Parse(args)
 	if err != nil {
 		return err
@@ -63,12 +78,14 @@ func (c *CreateCommand) Run(args []string) error {
 	// Must specify output path
 	if c.outputPath == "" {
 		fmt.Fprintf(os.Stderr, "Output path is required\n")
+		c.fs.Usage()
 		os.Exit(1)
 	}
 
 	// Ensure at least one valid path is given as an argument
 	if len(c.fs.Args()) == 0 {
 		fmt.Fprintf(os.Stderr, "At least one valid path is required\n")
+		c.fs.Usage()
 		os.Exit(1)
 	}
 	c.includes = c.fs.Args()

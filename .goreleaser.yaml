@@ -46,7 +46,7 @@ brews:
   - name: fatimg
     repository:
       owner: jsando
-      name: homebrew
+      name: homebrew-tools
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     homepage: "https://github.com/jsando/fatimg"
     description: "Go utility for creating and managing FAT32 boot (EFI) partition disk images"

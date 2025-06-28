@@ -18,7 +18,7 @@ as well as GPT (so additional cli flags to specify what is now assumed defaults)
 ### Using Homebrew
 
 ```bash
-brew tap jsando/homebrew
+brew tap jsando/tools
 brew install fatimg
 ```
 

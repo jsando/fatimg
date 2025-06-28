@@ -17,7 +17,7 @@ go build
 
 #### Build with version information
 ```bash
-./build.sh
+./build-with-version.sh
 ```
 
 #### Release build (using GoReleaser)
@@ -27,12 +27,6 @@ git tag v0.4.0
 git push origin v0.4.0
 # GitHub Actions will automatically build and release using GoReleaser
 ```
-
-### Test boot image with QEMU
-```bash
-./run.sh
-```
-Note: Requires QEMU and expects a `disk.img` file. The script uses UEFI firmware from homebrew's QEMU installation.
 
 ### Create test disk images
 ```bash
@@ -62,7 +56,6 @@ The project implements a command pattern with three subcommands:
 
 ## Key Implementation Details
 
-- Uses a custom fork of `go-diskfs` to fix issues with 8.3 lowercase files created by mtools
 - All disk operations assume the first partition is FAT32
 - Automatic gzip compression/decompression based on file extension (.gz)
 - When creating compressed images, uses parallel gzip (pgzip) for performance
@@ -73,5 +66,4 @@ The project implements a command pattern with three subcommands:
 No formal Go test suite exists. Testing is done by:
 1. Building the binary
 2. Creating disk images with various options
-3. Testing boot with QEMU using `run.sh`
-4. Comparing behavior with mtools-created images using `test/mkimage.sh`
+3. Comparing behavior with mtools-created images using `test/mkimage.sh`

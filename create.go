@@ -234,7 +234,7 @@ func (c *CreateCommand) createDiskImage(tempFileName string) error {
 	//partitionEnd := partitionSectors - PartitionStart + 1
 
 	// create raw disk image file
-	myDisk, err := diskfs.Create(tempFileName, int64(diskSize), diskfs.Raw, diskfs.SectorSizeDefault)
+	myDisk, err := diskfs.Create(tempFileName, int64(diskSize), diskfs.SectorSizeDefault)
 	if err != nil {
 		return err
 	}

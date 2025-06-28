@@ -26,8 +26,7 @@ builds:
       - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.buildDate={{.Date}}
 
 archives:
-  - format: tar.gz
-    # this name template makes the OS and Arch compatible with the results of `uname`.
+  - # this name template makes the OS and Arch compatible with the results of `uname`.
     name_template: >-
       {{ .ProjectName }}_
       {{- title .Os }}_
@@ -35,10 +34,6 @@ archives:
       {{- else if eq .Arch "386" }}i386
       {{- else }}{{ .Arch }}{{ end }}
       {{- if .Arm }}v{{ .Arm }}{{ end }}
-    # use zip for windows archives
-    format_overrides:
-      - goos: windows
-        format: zip
 
 changelog:
   sort: asc
@@ -46,3 +41,15 @@ changelog:
     exclude:
       - "^docs:"
       - "^test:"
+
+brews:
+  - name: fatimg
+    repository:
+      owner: jsando
+      name: homebrew
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    homepage: "https://github.com/jsando/fatimg"
+    description: "Go utility for creating and managing FAT32 boot (EFI) partition disk images"
+    license: "MIT"
+    test: |
+      system "#{bin}/fatimg", "--version"

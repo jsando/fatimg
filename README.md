@@ -15,11 +15,22 @@ as well as GPT (so additional cli flags to specify what is now assumed defaults)
 
 ## Installation
 
+### Using Homebrew
+
+```bash
+brew tap jsando/homebrew
+brew install fatimg
+```
+
+### Using Go
+
 ```bash
 go install github.com/jsando/fatimg@latest
 ```
 
-Or download a pre-built binary from the [releases](https://github.com/jsando/fatimg/releases) page.
+### Pre-built binaries
+
+Download a pre-built binary from the [releases](https://github.com/jsando/fatimg/releases) page.
 
 ## Commands
 

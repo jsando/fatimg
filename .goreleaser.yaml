@@ -48,7 +48,7 @@ brews:
       owner: jsando
       name: homebrew-tools
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
-    folder: Formula
+    directory: Formula
     homepage: "https://github.com/jsando/fatimg"
     description: "Go utility for creating and managing FAT32 boot (EFI) partition disk images"
     license: "MIT"

@@ -228,7 +228,8 @@ const BlockSize = 512
 const PartitionStart = 2048
 
 func (c *CreateCommand) createDiskImage(tempFileName string) error {
-	espSize := c.partitionMB * MB
+	// Use int64 to avoid overflow on 32-bit systems
+	espSize := int64(c.partitionMB) * MB
 	diskSize := espSize + 4*MB
 	partitionSectors := espSize / BlockSize
 	//partitionEnd := partitionSectors - PartitionStart + 1
@@ -244,7 +245,7 @@ func (c *CreateCommand) createDiskImage(tempFileName string) error {
 		Partitions: []*mbr.Partition{
 			{
 				Start:    PartitionStart,
-				Size:     uint32(partitionSectors),
+				Size:     uint32(partitionSectors), // Note: limits partition to ~2TB
 				Type:     mbr.EFISystem,
 				Bootable: true,
 			},
@@ -342,7 +343,7 @@ func copyFile(src string, dst string, fs filesystem.FileSystem) error {
 	if err != nil {
 		return err
 	}
-	if n != int(info.Size()) {
+	if int64(n) != info.Size() {
 		return fmt.Errorf("error writing output file '%s': %d bytes written, s/b %d\n", dst, n, info.Size())
 	}
 	err = rw.Close()

@@ -1,9 +1,7 @@
-/bootsie
 /.idea
 dist/
 .DS_Store
 *.img
 *.gz
 /fatimg
-disks/
-test-large
+test-files/

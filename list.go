@@ -66,8 +66,12 @@ func (c *ListCommand) Run(args []string) error {
 		return fmt.Errorf("expected path as last argument")
 	}
 	c.imageFile = c.fs.Arg(0)
-	// if filename ends with ".gz", gunzip to a tempfile
-	if filepath.Ext(c.imageFile) == ".gz" {
+	// if the image is gzipped, gunzip to a tempfile
+	gzipped, err := isGzipped(c.imageFile)
+	if err != nil {
+		return fmt.Errorf("could not open disk image: %w", err)
+	}
+	if gzipped {
 		tempFile, err := gunzipToTempFile(c.imageFile)
 		if err != nil {
 			return fmt.Errorf("could not gunzip file: %s", err)
@@ -76,11 +80,32 @@ func (c *ListCommand) Run(args []string) error {
 		defer os.Remove(tempFile)
 	}
 	disk, err := diskfs.Open(c.imageFile)
+	if err != nil {
+		return fmt.Errorf("could not open disk image: %w", err)
+	}
 	fs, err := disk.GetFilesystem(1)
 	if err != nil {
-		return fmt.Errorf("could not open filesystem: %s", err)
+		return fmt.Errorf("could not open filesystem: %w", err)
 	}
 	return c.listDir(fs, "/")
+}
+
+// isGzipped reports whether the file begins with the gzip magic number.
+// `create --gzip` compresses the output regardless of its file name, so
+// sniffing the content is more reliable than looking for a ".gz" extension.
+func isGzipped(filename string) (bool, error) {
+	f, err := os.Open(filename)
+	if err != nil {
+		return false, err
+	}
+	defer f.Close()
+	magic := make([]byte, 2)
+	if _, err := io.ReadFull(f, magic); err != nil {
+		// Too short to be a gzip stream; leave it to the disk image reader
+		// to report what is actually wrong with it.
+		return false, nil
+	}
+	return magic[0] == 0x1f && magic[1] == 0x8b, nil
 }
 
 func gunzipToTempFile(filename string) (tempFilename string, err error) {
@@ -94,11 +119,12 @@ func gunzipToTempFile(filename string) (tempFilename string, err error) {
 	if err != nil {
 		return tempFile.Name(), err
 	}
+	defer reader.Close()
 	gzipReader, err := gzip.NewReader(reader)
-	defer gzipReader.Close()
 	if err != nil {
 		return tempFile.Name(), err
 	}
+	defer gzipReader.Close()
 	_, err = io.Copy(tempFile, gzipReader)
 	return tempFile.Name(), err
 }
@@ -114,14 +140,10 @@ func (c *ListCommand) listDir(fs filesystem.FileSystem, path string) error {
 		}
 		absPath := filepath.Join(path, file.Name())
 		if c.long {
-			info, err := file.Info()
-			if err != nil {
-				return err
-			}
 			// [4.0K  ] Dec 31 1979 EFI/
 			fmt.Printf("[%6s]  %s  %s\n",
-				humanize.Bytes(uint64(info.Size())),
-				info.ModTime().Format("Jan _2 2006"),
+				humanize.Bytes(uint64(file.Size())),
+				file.ModTime().Format("Jan _2 2006"),
 				absPath)
 		} else {
 			fmt.Printf("%s\n", absPath)

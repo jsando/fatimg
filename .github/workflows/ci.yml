@@ -1,0 +1,34 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+      - name: Install FAT validation tools
+        # mtools and dosfstools let the tests verify our images against an
+        # independent FAT implementation instead of only against ourselves.
+        run: sudo apt-get update && sudo apt-get install -y mtools dosfstools
+      - name: Check formatting
+        run: make fmt-check
+      - name: Vet
+        run: make vet
+      - name: Test
+        # -count=1 bypasses the test cache, which does not notice a tool
+        # appearing in a directory that was already on PATH.
+        run: go test -count=1 -v ./...
+      - name: Build
+        run: make build

@@ -77,16 +77,14 @@ func (c *CreateCommand) Run(args []string) error {
 	}
 	// Must specify output path
 	if c.outputPath == "" {
-		fmt.Fprintf(os.Stderr, "Output path is required\n")
 		c.fs.Usage()
-		os.Exit(1)
+		return fmt.Errorf("output path is required")
 	}
 
 	// Ensure at least one valid path is given as an argument
 	if len(c.fs.Args()) == 0 {
-		fmt.Fprintf(os.Stderr, "At least one valid path is required\n")
 		c.fs.Usage()
-		os.Exit(1)
+		return fmt.Errorf("at least one valid path is required")
 	}
 	c.includes = c.fs.Args()
 
@@ -98,40 +96,43 @@ func (c *CreateCommand) Run(args []string) error {
 	// Delete the output file if it exists already and -force was specified
 	if _, err := os.Stat(c.outputPath); err == nil {
 		if !c.overwriteOutput {
-			fmt.Fprintf(os.Stderr, "Output path '%s' exists, remove it or use --force to overwrite\n", c.outputPath)
-			os.Exit(1)
+			return fmt.Errorf("output path '%s' exists, remove it or use --force to overwrite", c.outputPath)
 		}
 		os.Remove(c.outputPath)
 	}
 
 	// Generate a unique temporary file in the same folder as *outputPath
 	tempFile, err := os.CreateTemp(filepath.Dir(c.outputPath), "disk.img.")
-	tempFileName := tempFile.Name()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error creating temporary file: %s\n", err.Error())
-		os.Exit(1)
+		return fmt.Errorf("error creating temporary file: %w", err)
 	}
+	tempFileName := tempFile.Name()
+	tempFile.Close()
 	os.Remove(tempFileName)
 
+	// Any failure from here on leaves a partial image behind, so clean it up
+	// rather than littering the output directory with disk.img.* files.
+	defer func() {
+		if err != nil {
+			os.Remove(tempFileName)
+		}
+	}()
+
 	// Package everything into an EFI partition
-	err = c.createDiskImage(tempFileName)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error creating disk image: %s\n", err.Error())
-		os.Exit(1)
+	if err = c.createDiskImage(tempFileName); err != nil {
+		return fmt.Errorf("error creating disk image: %w", err)
 	}
 
 	// Truncate?
 	if c.trimImage {
 		fmt.Printf("Truncating disk image ... ")
-		trimSize, err := c.trimFile(tempFileName)
+		var trimSize int64
+		trimSize, err = c.trimFile(tempFileName)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error finding trimmed file size: %s\n", err.Error())
-			os.Exit(1)
+			return fmt.Errorf("error finding trimmed file size: %w", err)
 		}
-		err = os.Truncate(tempFileName, trimSize)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error truncating disk image: %s\n", err.Error())
-			os.Exit(1)
+		if err = os.Truncate(tempFileName, trimSize); err != nil {
+			return fmt.Errorf("error truncating disk image: %w", err)
 		}
 		fmt.Printf("truncated image to %s\n", humanize.Bytes(uint64(trimSize)))
 	}
@@ -139,20 +140,15 @@ func (c *CreateCommand) Run(args []string) error {
 	// Optionally compress the output
 	if c.gzipOutput {
 		fmt.Fprintf(os.Stderr, "Compressing %s ... \n", c.outputPath)
-		err = c.compressOutput(tempFileName, c.outputPath)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error compressing output: %s\n", err.Error())
-			os.Exit(1)
+		if err = c.compressOutput(tempFileName, c.outputPath); err != nil {
+			return fmt.Errorf("error compressing output: %w", err)
 		}
 	} else {
 		// just rename temp file to outputfile
-		err = os.Rename(tempFileName, c.outputPath)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error renaming disk image: %s\n", err.Error())
-			os.Exit(1)
+		if err = os.Rename(tempFileName, c.outputPath); err != nil {
+			return fmt.Errorf("error renaming disk image: %w", err)
 		}
 	}
-	// todo return error, don't os.Exit everywhere
 	return nil
 }
 
@@ -205,9 +201,13 @@ scanLoop:
 func (c *CreateCommand) compressOutput(inputFileName string, outputFileName string) error {
 	gzipFile, err := os.Create(outputFileName)
 	if err != nil {
-		panic(err)
+		return err
 	}
+	defer gzipFile.Close()
 	reader, err := os.Open(inputFileName)
+	if err != nil {
+		return err
+	}
 	defer reader.Close()
 	w := gzip.NewWriter(gzipFile)
 	//w.SetConcurrency(100000, 10)
@@ -216,11 +216,10 @@ func (c *CreateCommand) compressOutput(inputFileName string, outputFileName stri
 	if err != nil {
 		return err
 	}
-	err = os.Remove(inputFileName)
-	if err != nil {
-		return err
+	if err2 != nil {
+		return err2
 	}
-	return err2
+	return os.Remove(inputFileName)
 }
 
 const MB = 1024 * 1024
@@ -292,6 +291,25 @@ func (c *CreateCommand) createDiskImage(tempFileName string) error {
 	return err
 }
 
+// reRootPath maps a source path to its destination inside the image by
+// stripping prefix, which re-roots the folder at "/":
+//
+//	prefix=/a/b  path=/a/b/c    -->  /c
+//	prefix=/a/b  path=/a/b/c/d  -->  /c/d
+//
+// A source folder given with a trailing slash has its own name stripped by the
+// caller, leaving path == prefix; its contents are copied to the root.
+func reRootPath(prefix string, path string) (string, error) {
+	if !strings.HasPrefix(path, prefix) {
+		return "", fmt.Errorf("path '%s' is not rooted in %s", path, prefix)
+	}
+	targetPath := path[len(prefix):]
+	if targetPath == "" {
+		targetPath = "/"
+	}
+	return targetPath, nil
+}
+
 // /a/b/c/ --> 			c/
 // /a/b/c/d/ --> 		c/d/
 // /a/b/c/f.txt -> 		c/f.txt
@@ -303,10 +321,10 @@ func copyDir(prefix string, path string, fs filesystem.FileSystem) error {
 		return err
 	}
 
-	if !strings.HasPrefix(path, prefix) {
-		return fmt.Errorf("path '%s' is not rooted in %s", path, prefix)
+	targetPath, err := reRootPath(prefix, path)
+	if err != nil {
+		return err
 	}
-	targetPath := path[len(prefix):]
 	fs.Mkdir(targetPath)
 	for _, file := range files {
 		if file.IsDir() {

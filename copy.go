@@ -70,8 +70,12 @@ func (c *CopyCommand) Run(args []string) error {
 	c.imageFile = c.fs.Arg(0)
 	c.destDir = c.fs.Arg(1)
 
-	// if filename ends with ".gz", gunzip to a tempfile
-	if filepath.Ext(c.imageFile) == ".gz" {
+	// if the image is gzipped, gunzip to a tempfile
+	gzipped, err := isGzipped(c.imageFile)
+	if err != nil {
+		return fmt.Errorf("could not open disk image: %w", err)
+	}
+	if gzipped {
 		tempFile, err := gunzipToTempFile(c.imageFile)
 		if err != nil {
 			return fmt.Errorf("could not gunzip file: %s", err)
@@ -80,9 +84,12 @@ func (c *CopyCommand) Run(args []string) error {
 		defer os.Remove(tempFile)
 	}
 	disk, err := diskfs.Open(c.imageFile)
+	if err != nil {
+		return fmt.Errorf("could not open disk image: %w", err)
+	}
 	fs, err := disk.GetFilesystem(1)
 	if err != nil {
-		return fmt.Errorf("could not open filesystem: %s", err)
+		return fmt.Errorf("could not open filesystem: %w", err)
 	}
 
 	// Ensure destDir exists
@@ -104,18 +111,20 @@ func (c *CopyCommand) copyFiles(fs filesystem.FileSystem, sourceDir string) erro
 		}
 		absPath := filepath.Join(sourceDir, file.Name())
 		targetPath := filepath.Join(c.destDir, absPath)
-		err = os.MkdirAll(filepath.Dir(targetPath), 0755)
+		if file.IsDir() {
+			// Create the directory itself, not just its parent, so that
+			// directories with no files in them are preserved.
+			err = os.MkdirAll(targetPath, 0755)
+		} else {
+			err = os.MkdirAll(filepath.Dir(targetPath), 0755)
+		}
 		if err != nil {
 			return fmt.Errorf("could not create directory for target path: %s", err)
 		}
 		if file.IsDir() {
 			err = c.copyFiles(fs, absPath)
 		} else {
-			info, err := file.Info()
-			if err != nil {
-				return err
-			}
-			err = c.copyFile(fs, absPath, targetPath, info)
+			err = c.copyFile(fs, absPath, targetPath, file)
 		}
 		if err != nil {
 			return err
@@ -150,7 +159,7 @@ func (c *CopyCommand) copyFile(fs filesystem.FileSystem, absPath string, targetP
 
 	// Use io.CopyBuffer with a large buffer for better performance
 	buffer := make([]byte, bufferSize)
-	
+
 	var pr *progressReader
 	if c.progress && fileSize > 10*1024*1024 { // Show progress for files > 10MB if flag is set
 		// Create a progress reader wrapper
@@ -179,7 +188,7 @@ func (c *CopyCommand) copyFile(fs filesystem.FileSystem, absPath string, targetP
 	// Print final progress and newline after completion if progress was shown
 	if pr != nil {
 		pr.printProgress() // Show 100% completion
-		fmt.Println() // Move to next line after progress bar
+		fmt.Println()      // Move to next line after progress bar
 	}
 
 	return nil
@@ -213,16 +222,16 @@ func (pr *progressReader) printProgress() {
 	percent := float64(pr.read) / float64(pr.size) * 100
 	elapsed := time.Since(pr.startTime).Seconds()
 	speed := float64(pr.read) / elapsed / 1024 / 1024 // MB/s
-	
+
 	// Calculate remaining time, but show 0s when nearly complete
 	var remaining float64
 	if pr.read < pr.size && elapsed > 0 {
 		remaining = float64(pr.size-pr.read) / (float64(pr.read) / elapsed)
 	}
-	
+
 	// Clear the line with spaces to prevent artifacts
 	fmt.Printf("\r%-80s", "") // Clear line
-	fmt.Printf("\r%s: %.1f%% (%.1f MB/s, ~%.0fs remaining)", 
+	fmt.Printf("\r%s: %.1f%% (%.1f MB/s, ~%.0fs remaining)",
 		filepath.Base(pr.path), percent, speed, remaining)
 }
 

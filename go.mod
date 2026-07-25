@@ -3,13 +3,12 @@ module github.com/jsando/fatimg
 go 1.25.0
 
 require (
-	github.com/diskfs/go-diskfs v1.9.4
+	github.com/diskfs/go-diskfs v1.6.0
 	github.com/dustin/go-humanize v1.0.1
 	github.com/klauspost/pgzip v1.2.6
 )
 
 require (
-	github.com/anchore/go-lzo v0.1.0 // indirect
 	github.com/djherbis/times v1.6.0 // indirect
 	github.com/elliotwutingfeng/asciiset v0.0.0-20260129054604-cfde2086bc57 // indirect
 	github.com/google/uuid v1.6.0 // indirect

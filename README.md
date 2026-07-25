@@ -32,6 +32,39 @@ go install github.com/jsando/fatimg@latest
 
 Download a pre-built binary from the [releases](https://github.com/jsando/fatimg/releases) page.
 
+## Building and testing
+
+Building needs nothing but a Go toolchain:
+
+```bash
+make build
+```
+
+Running the tests additionally requires **mtools** and **dosfstools**:
+
+```bash
+# macOS
+brew install mtools dosfstools
+
+# Debian/Ubuntu
+sudo apt-get install mtools dosfstools
+```
+
+These provide `mdir`, `mcopy` and `fsck.fat`. The tests use them to check that
+disk images are valid according to independent FAT implementations, rather than
+only checking that fatimg agrees with itself — a filesystem can be
+self-consistent and still be wrong. They are a hard requirement: if a tool is
+missing the tests fail rather than skip, because a skipped check is
+indistinguishable from a passing one.
+
+```bash
+make test         # everything (fails early if a tool is missing)
+make unit         # only the tests that need no external tools
+make integration  # round-trip and validation tests, verbose
+make check        # what CI runs: gofmt, vet, tests
+make help         # list all targets
+```
+
 ## Commands
 
 ### Create a disk image

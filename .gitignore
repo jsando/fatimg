@@ -4,4 +4,4 @@ dist/
 *.img
 *.gz
 /fatimg
-test-files/
+test-files/tmp/

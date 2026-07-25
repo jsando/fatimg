@@ -114,10 +114,14 @@ func (c *ListCommand) listDir(fs filesystem.FileSystem, path string) error {
 		}
 		absPath := filepath.Join(path, file.Name())
 		if c.long {
+			info, err := file.Info()
+			if err != nil {
+				return err
+			}
 			// [4.0K  ] Dec 31 1979 EFI/
 			fmt.Printf("[%6s]  %s  %s\n",
-				humanize.Bytes(uint64(file.Size())),
-				file.ModTime().Format("Jan _2 2006"),
+				humanize.Bytes(uint64(info.Size())),
+				info.ModTime().Format("Jan _2 2006"),
 				absPath)
 		} else {
 			fmt.Printf("%s\n", absPath)

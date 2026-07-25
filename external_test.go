@@ -26,12 +26,23 @@ func mtoolsImage(path string) string {
 	return fmt.Sprintf("%s@@%d", path, partitionOffset)
 }
 
-// runTool runs an external tool, skipping the test if it is not installed.
+// requireToolsEnv, when set, turns a missing tool from a skip into a failure.
+// CI sets it so that a broken install step cannot quietly reduce this tier to
+// no coverage while the run still reports green.
+const requireToolsEnv = "FATIMG_REQUIRE_EXTERNAL_TOOLS"
+
+// runTool runs an external tool, skipping the test if it is not installed
+// (unless the tools are declared mandatory, see requireToolsEnv).
 func runTool(t *testing.T, name string, args ...string) (string, error) {
 	t.Helper()
 	bin, err := exec.LookPath(name)
 	if err != nil {
-		t.Skipf("%s not installed, skipping external validation", name)
+		if os.Getenv(requireToolsEnv) != "" {
+			t.Fatalf("%s is not installed and %s is set: install mtools and dosfstools",
+				name, requireToolsEnv)
+		}
+		t.Skipf("%s not installed, skipping external validation "+
+			"(install mtools and dosfstools to enable)", name)
 	}
 	cmd := exec.Command(bin, args...)
 	// mtools otherwise rejects our geometry with "Bad configuration".

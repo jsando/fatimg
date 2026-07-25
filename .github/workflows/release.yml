@@ -24,7 +24,9 @@ jobs:
       - name: Install FAT validation tools
         run: sudo apt-get update && sudo apt-get install -y mtools dosfstools
       - name: Test
-        run: go test ./...
+        run: go test -count=1 ./...
+        env:
+          FATIMG_REQUIRE_EXTERNAL_TOOLS: "1"
 
   goreleaser:
     needs: test

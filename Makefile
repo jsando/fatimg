@@ -14,14 +14,18 @@ all: check build ## Verify and build
 build: ## Build the binary with version info
 	go build -ldflags "$(LDFLAGS)" -o $(BIN) .
 
+# -count=1 disables the test cache. The external validation tests decide at
+# run time whether mtools and fsck.fat are installed, and Go's cache key does
+# not change when a tool appears in a directory already on PATH -- so a cached
+# run happily replays "skipping, not installed" after you have installed them.
 test: ## Run all tests, including image round-trips
-	go test ./...
+	go test -count=1 ./...
 
 unit: ## Run only fast tests (skips image round-trips)
 	go test -short ./...
 
 integration: ## Run image round-trip and external validation tests verbosely
-	go test -v -run 'TestRoundTrip|TestList|TestCreate|TestGzip|TestMtools|TestFsck' ./...
+	go test -count=1 -v -run 'TestRoundTrip|TestList|TestCreate|TestGzip|TestMtools|TestFsck' ./...
 
 vet: ## Run go vet
 	go vet ./...

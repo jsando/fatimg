@@ -30,6 +30,11 @@ archives:
       {{- else }}{{ .Arch }}{{ end }}
       {{- if .Arm }}v{{ .Arm }}{{ end }}
 
+release:
+  # Allow re-running a failed release for the same tag without hitting
+  # "422 already_exists" on assets uploaded by the earlier attempt.
+  replace_existing_artifacts: true
+
 changelog:
   sort: asc
   filters:

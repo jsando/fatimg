@@ -26,23 +26,20 @@ func mtoolsImage(path string) string {
 	return fmt.Sprintf("%s@@%d", path, partitionOffset)
 }
 
-// requireToolsEnv, when set, turns a missing tool from a skip into a failure.
-// CI sets it so that a broken install step cannot quietly reduce this tier to
-// no coverage while the run still reports green.
-const requireToolsEnv = "FATIMG_REQUIRE_EXTERNAL_TOOLS"
-
-// runTool runs an external tool, skipping the test if it is not installed
-// (unless the tools are declared mandatory, see requireToolsEnv).
+// runTool runs an external tool. These tools are a hard requirement rather
+// than an optional extra: a skipped validation tier looks exactly like a
+// passing one, so a missing tool fails instead. `make unit` runs the suite
+// without them.
 func runTool(t *testing.T, name string, args ...string) (string, error) {
 	t.Helper()
 	bin, err := exec.LookPath(name)
 	if err != nil {
-		if os.Getenv(requireToolsEnv) != "" {
-			t.Fatalf("%s is not installed and %s is set: install mtools and dosfstools",
-				name, requireToolsEnv)
-		}
-		t.Skipf("%s not installed, skipping external validation "+
-			"(install mtools and dosfstools to enable)", name)
+		t.Fatalf("%s not found on PATH.\n"+
+			"The tests validate images against mtools and dosfstools; install them:\n"+
+			"  macOS:  brew install mtools dosfstools\n"+
+			"  Debian: sudo apt-get install mtools dosfstools\n"+
+			"See the Building and testing section of README.md, "+
+			"or run `make unit` for the tests that do not need them.", name)
 	}
 	cmd := exec.Command(bin, args...)
 	// mtools otherwise rejects our geometry with "Bad configuration".

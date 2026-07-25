@@ -27,10 +27,8 @@ jobs:
       - name: Vet
         run: make vet
       - name: Test
-        # -count=1 bypasses the test cache; the env var makes a missing mtools
-        # or fsck.fat a failure rather than a silent skip.
+        # -count=1 bypasses the test cache, which does not notice a tool
+        # appearing in a directory that was already on PATH.
         run: go test -count=1 -v ./...
-        env:
-          FATIMG_REQUIRE_EXTERNAL_TOOLS: "1"
       - name: Build
         run: make build

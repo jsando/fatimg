@@ -192,7 +192,7 @@ scanLoop:
 		// Scan the chunk from the end towards the beginning
 		for i := len(buf) - 1; i >= 0; i-- {
 			if buf[i] != 0 {
-				trimSize = offset - readSize + int64(i)
+				trimSize = offset - readSize + int64(i) + 1
 				break scanLoop
 			}
 		}

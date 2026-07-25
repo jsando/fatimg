@@ -111,7 +111,11 @@ func (c *CopyCommand) copyFiles(fs filesystem.FileSystem, sourceDir string) erro
 		if file.IsDir() {
 			err = c.copyFiles(fs, absPath)
 		} else {
-			err = c.copyFile(fs, absPath, targetPath, file)
+			info, err := file.Info()
+			if err != nil {
+				return err
+			}
+			err = c.copyFile(fs, absPath, targetPath, info)
 		}
 		if err != nil {
 			return err

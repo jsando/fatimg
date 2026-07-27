@@ -10,8 +10,11 @@ fatimg can create, extract, and list files on the first partition (which must be
 
 The disk image file can optionally be gzipped, in which case fatimg will automatically gunzip it to a tmp file.
 
-WARNING: there will probably be breaking changes as I intend to extend it to support legacy boot images with MBR,
-as well as GPT (so additional cli flags to specify what is now assumed defaults).
+With `--bios-boot` it can also make the image bootable by a legacy BIOS, by installing SYSLINUX. See
+[Legacy BIOS boot](#legacy-bios-boot) below.
+
+WARNING: there will probably be breaking changes as I intend to extend it to support GPT
+(so additional cli flags to specify what is now assumed defaults).
 
 ## Installation
 
@@ -40,27 +43,35 @@ Building needs nothing but a Go toolchain:
 make build
 ```
 
-Running the tests additionally requires **mtools** and **dosfstools**:
+Running the tests additionally requires **mtools**, **dosfstools** and **QEMU**:
 
 ```bash
 # macOS
-brew install mtools dosfstools
+brew install mtools dosfstools qemu
 
 # Debian/Ubuntu
-sudo apt-get install mtools dosfstools
+sudo apt-get install mtools dosfstools qemu-system-x86
 ```
 
-These provide `mdir`, `mcopy` and `fsck.fat`. The tests use them to check that
-disk images are valid according to independent FAT implementations, rather than
-only checking that fatimg agrees with itself — a filesystem can be
-self-consistent and still be wrong. They are a hard requirement: if a tool is
-missing the tests fail rather than skip, because a skipped check is
-indistinguishable from a passing one.
+The first two provide `mdir`, `mcopy` and `fsck.fat`. The tests use them to
+check that disk images are valid according to independent FAT implementations,
+rather than only checking that fatimg agrees with itself — a filesystem can be
+self-consistent and still be wrong. QEMU is used by the boot test, which builds
+a `--bios-boot` image and runs it on an emulated PC; no filesystem check can
+tell you whether a bootloader install worked, because a boot sector is not part
+of the filesystem. They are a hard requirement: if a tool is missing the tests
+fail rather than skip, because a skipped check is indistinguishable from a
+passing one.
+
+The boot test also needs a SYSLINUX release to install. `make` downloads one
+into `.syslinux/` for you; it is not vendored because SYSLINUX is GPL-licensed
+and fatimg is Apache-2.0.
 
 ```bash
 make test         # everything (fails early if a tool is missing)
 make unit         # only the tests that need no external tools
 make integration  # round-trip and validation tests, verbose
+make boot         # boot a --bios-boot image under QEMU, verbose
 make check        # what CI runs: gofmt, vet, tests
 make help         # list all targets
 ```
@@ -70,7 +81,7 @@ make help         # list all targets
 ### Create a disk image
 
 ```
-Create a disk image with an EFI partition.
+Create a disk image with a FAT32 partition.
 
 The contents of the partition are specified as a list of one or more paths.
 Folders are copied recursively, and include the folder name itself
@@ -80,14 +91,20 @@ Usage:
   fatimg create [options] <path> [<path> ...]
 
 Options:
+  -bios-boot
+    	make the image bootable by a legacy BIOS, using SYSLINUX
   -gzip
     	compress output file with gzip (automatic if output ends with '.gz')
   -label string
     	EFI partition volume label (default "boot")
   -output string
     	output path (required)
+  -part-type string
+    	MBR partition type, "efi" or "fat32" (default "efi")
   -size int
     	partition size in megabytes (default 1024)
+  -syslinux-dir string
+    	directory holding the SYSLINUX release to install (required with --bios-boot)
   -trim
     	trim disk image before compressing (truncate zero-filled sectors at the end)
 ```
@@ -97,6 +114,39 @@ Example:
 # Create a compressed 512MB disk image with label "BOOT"
 fatimg create --output boot.img.gz --size 512 --label BOOT ./EFI/
 ```
+
+### Legacy BIOS boot
+
+`--bios-boot` installs SYSLINUX into the image so a PC BIOS will boot it:
+the SYSLINUX MBR bootstrap in sector 0, its boot sector merged into the
+partition, and `ldlinux.sys` and `ldlinux.c32` written to the filesystem root.
+You supply the `syslinux.cfg`, as one of the paths copied in.
+
+```bash
+fatimg create --output disk.img --size 512 \
+    --bios-boot --syslinux-dir ~/syslinux-6.03 --part-type fat32 ./boot/
+```
+
+SYSLINUX is not bundled with fatimg — it is GPL-licensed and fatimg is
+Apache-2.0 — so `--syslinux-dir` has to point at your own copy. It needs
+`mbr.bin`, `ldlinux.bss`, `ldlinux.sys` and `ldlinux.c32`, and they should all
+come from the same release. An unpacked
+[syslinux release tarball](https://mirrors.edge.kernel.org/pub/linux/utils/boot/syslinux/)
+works as-is: the tarball ships them prebuilt. Most distribution packages do
+**not**, because their `syslinux` installer has `ldlinux.bss` and `ldlinux.sys`
+linked into the binary rather than shipped as files.
+
+Two things to know:
+
+- `--part-type fat32` writes partition type `0x0c` instead of the default EFI
+  system partition (`0xef`). Both boot on a normal BIOS, which goes by the
+  active flag rather than the type byte, but `0x0c` is the conventional choice
+  for a BIOS-only image and some firmware is fussier than others.
+- The partition has to be large enough to be a real FAT32 — more than 65524
+  clusters, which in practice means `--size 33` or above. Below that, SYSLINUX
+  applies the standard rule and reads the filesystem as FAT16, and the boot
+  stops after printing its banner. fatimg refuses to build such an image rather
+  than let you find out at boot time.
 
 ### List contents
 

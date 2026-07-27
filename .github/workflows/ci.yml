@@ -18,17 +18,23 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.25'
-      - name: Install FAT validation tools
+      - name: Install validation tools
         # mtools and dosfstools let the tests verify our images against an
-        # independent FAT implementation instead of only against ourselves.
-        run: sudo apt-get update && sudo apt-get install -y mtools dosfstools
+        # independent FAT implementation instead of only against ourselves;
+        # QEMU lets the boot test check that a --bios-boot image actually
+        # boots, which no filesystem check can tell us.
+        run: sudo apt-get update && sudo apt-get install -y mtools dosfstools qemu-system-x86
+      - name: Fetch SYSLINUX
+        # Not vendored: SYSLINUX is GPL-2.0 and fatimg is Apache-2.0.
+        run: make syslinux
       - name: Check formatting
         run: make fmt-check
       - name: Vet
         run: make vet
       - name: Test
-        # -count=1 bypasses the test cache, which does not notice a tool
-        # appearing in a directory that was already on PATH.
-        run: go test -count=1 -v ./...
+        # Run through make so the boot test is pointed at the SYSLINUX release
+        # fetched above. -count=1 bypasses the test cache, which does not
+        # notice a tool appearing in a directory that was already on PATH.
+        run: make test
       - name: Build
         run: make build

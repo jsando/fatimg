@@ -6,3 +6,4 @@ dist/
 /fatimg
 test-files/tmp/
 /test-files/
+/.syslinux/

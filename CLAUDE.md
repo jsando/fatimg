@@ -14,16 +14,21 @@ prerequisites and disable the test cache where it would otherwise mislead.
 
 ```bash
 make build         # build with version info
-make test          # all tests; fails early if mtools/dosfstools are missing
+make test          # all tests; fails early if a required tool is missing
 make unit          # only the tests that need no external tools
 make integration   # round-trip and external validation tests, verbose
+make boot          # boot a --syslinux image under QEMU, verbose
+make syslinux      # download the SYSLINUX release the boot test installs
 make check         # what CI runs: gofmt, vet, tests
 make help          # list all targets
 ```
 
-`make test` requires `mtools` and `dosfstools` (see the README). A missing tool
-is a failure, not a skip, because a skipped validation tier looks exactly like a
-passing one.
+`make test` requires `mtools`, `dosfstools` and `qemu-system-x86_64` (see the
+README). A missing tool is a failure, not a skip, because a skipped validation
+tier looks exactly like a passing one. The boot test also needs a SYSLINUX
+release; `make` downloads one into `.syslinux/` and exports
+`FATIMG_SYSLINUX_DIR`, so run the boot test through make rather than calling
+`go test` directly.
 
 Releases are built by GoReleaser from a pushed tag; `build-with-version.sh`
 predates the Makefile and `make build` supersedes it.
@@ -37,6 +42,10 @@ A small command pattern: `main.go` dispatches to one `Runner` per subcommand.
 | `create` | `create.go` | MBR-partitioned disk with a single FAT32 partition; recursively copies files in |
 | `ls` | `list.go` | Also holds the gzip sniffing and temp-file decompression shared with `cp` |
 | `cp` | `copy.go` | Extract to a local directory |
+
+`boot.go` is not a subcommand: it is the SYSLINUX installer behind
+`create --syslinux`, and runs after the filesystem is closed, on the image as
+a plain file.
 
 Commands return errors; they must not call `os.Exit`. Tests drive
 `executeSubcommand` in-process, so an exit would take the test binary with it.
@@ -53,6 +62,42 @@ are switched to `flag.ContinueOnError`.
   removing it if anything fails.
 - `copyFile` reads the whole file into memory before writing so that FAT32
   allocates the cluster chain once; see go-diskfs issue #130.
+- go-diskfs writes placeholders into two BPB fields: hidden sectors is always
+  0, and the CHS geometry is 1/1. Both are wrong for a filesystem inside a
+  partition, and SYSLINUX adds hidden sectors to every sector it reads, so
+  `fixBPBGeometry` corrects them (in the primary and the backup boot sector)
+  for every image, bootable or not.
+
+## SYSLINUX installation (`boot.go`)
+
+Four things make a FAT32 image BIOS-bootable, and only the last is real work:
+`mbr.bin` in the first 440 bytes of sector 0; a correct hidden-sector count;
+the SYSLINUX boot sector merged into the partition, keeping the BPB; and
+`ldlinux.sys` patched with the list of disk sectors it occupies. A 512-byte
+boot sector cannot walk a FAT chain, so the sector map is stamped in at install
+time, along with a checksum ldlinux.sys verifies against itself at boot.
+
+- This follows `syslinux_patch()` in syslinux-6.03
+  `libinstaller/syslxmod.c`. The structure offsets are read out of the image
+  rather than hardcoded, because they are a property of the ldlinux.sys build
+  being installed — which is also why the files must come from one release.
+- `mbr.Table.Write` only touches bytes 446 onwards, so writing the bootstrap at
+  offset 0 cannot disturb the partition table.
+- ldlinux.sys is written before the user's files so it lands contiguously.
+  It is addressed by an extent list with room for 192 entries, and a fragmented
+  one would overflow it; `generateExtents` errors rather than truncating.
+- SYSLINUX is not vendored or embedded; the files come from `--syslinux-dir` at
+  run time. Do not add a `go:embed` of them — that would put someone else's
+  binaries inside ours, with their version skew and redistribution obligations,
+  and it is what the `--syslinux-dir` search paths exist to avoid.
+- This file is why the project is GPLv3. The patcher is derived from GPL-2.0+
+  syslinux source, and `boot.go` carries the attribution header; keep it, and
+  keep new work here compatible with those terms. See the License section of
+  README.md.
+- A FAT32 with 65524 clusters or fewer reads as FAT16 by the standard rule, and
+  SYSLINUX applies it. `installSyslinux` rejects such an image; without that
+  check the symptom is a boot that prints the SYSLINUX banner and then cannot
+  find ldlinux.c32, which is a long way from the cause.
 
 ## go-diskfs is pinned to v1.6.0 — do not upgrade casually
 
@@ -71,16 +116,21 @@ defects are only visible through `fsck.fat`, which is why that tier exists.
 
 ## Testing approach
 
-Three tiers, all under `go test`:
+Four tiers, all under `go test`:
 
-1. **Unit** (`create_test.go`) — `trimFile` across chunk boundaries, path
-   re-rooting.
+1. **Unit** (`create_test.go`, `boot_test.go`) — `trimFile` across chunk
+   boundaries, path re-rooting, and the SYSLINUX patch arithmetic.
 2. **Round-trip** (`roundtrip_test.go`) — create an image from a fixture tree
    and extract it again, asserting byte-identical contents across the option
    matrix. This is the tier that catches a broken `create`/`ls`/`cp`.
 3. **External validation** (`external_test.go`) — `mdir`, `mcopy` and
    `fsck.fat` check the image against independent FAT implementations, so a
    self-consistent but non-conforming filesystem cannot pass.
+4. **Boot** (`qemu_test.go`) — build a `--syslinux` image and run it on an
+   emulated PC, checking that SYSLINUX reached the `syslinux.cfg` in the image.
+   Nothing below this tier can catch a broken bootloader install: an image with
+   no boot code at all passes every other test here, because a boot sector is
+   not part of the filesystem as far as `fsck.fat` is concerned.
 
 When fixing a bug, confirm the new test fails with the fix reverted. Every
 regression covered here was verified that way.

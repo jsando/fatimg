@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2023-2026 Jason Sando
+
 package main
 
 import (
@@ -23,7 +26,30 @@ type CreateCommand struct {
 	outputPath      string
 	partitionMB     int
 	trimImage       bool
+	syslinuxBoot    bool
+	syslinuxDir     string
+	partType        string
+	syslinux        *syslinuxFiles
 	includes        []string
+}
+
+// Partition type names accepted by --part-type. EFI is the historical default;
+// a BIOS-only image is more conventionally 0x0c, and some firmware refuses to
+// boot an EFI system partition.
+const (
+	partTypeEFI   = "efi"
+	partTypeFAT32 = "fat32"
+)
+
+func mbrPartitionType(name string) (mbr.Type, error) {
+	switch name {
+	case partTypeEFI:
+		return mbr.EFISystem, nil
+	case partTypeFAT32:
+		return mbr.Fat32LBA, nil
+	default:
+		return 0, fmt.Errorf("unknown partition type %q, expected %q or %q", name, partTypeEFI, partTypeFAT32)
+	}
 }
 
 func NewCreateCommand() *CreateCommand {
@@ -36,12 +62,23 @@ func NewCreateCommand() *CreateCommand {
 	cmd.fs.IntVar(&cmd.partitionMB, "size", 1024, "partition size in megabytes")
 	cmd.fs.BoolVar(&cmd.gzipOutput, "gzip", false, "compress output file with gzip (automatic if output ends with '.gz')")
 	cmd.fs.BoolVar(&cmd.trimImage, "trim", false, "trim disk image before compressing (truncate zero-filled sectors at the end)")
+	cmd.fs.BoolVar(&cmd.syslinuxBoot, "syslinux", false, "make the image bootable by a legacy BIOS, using SYSLINUX")
+	cmd.fs.StringVar(&cmd.syslinuxDir, "syslinux-dir", "", "directory holding the SYSLINUX release to install (required with --syslinux)")
+	cmd.fs.StringVar(&cmd.partType, "part-type", partTypeEFI, fmt.Sprintf("MBR partition type, %q or %q", partTypeEFI, partTypeFAT32))
 	cmd.fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, `Create a disk image with an EFI partition.
+		fmt.Fprintf(os.Stderr, `Create a disk image with a FAT32 partition.
 
 The contents of the partition are specified as a list of one or more paths.
 Folders are copied recursively, and include the folder name itself
 unless it ends with a trailing '/'.
+
+With --syslinux the image is also made bootable by a legacy BIOS. This
+installs SYSLINUX, whose files are read from --syslinux-dir; they are not
+bundled with fatimg because SYSLINUX is licensed under the GPL. Point it at
+an unpacked syslinux release tarball, which ships the mbr.bin, ldlinux.bss,
+ldlinux.sys and ldlinux.c32 an install needs; most distribution packages do
+not, because their installer has them built in. You supply the syslinux.cfg
+yourself, as one of the paths to copy in.
 
 Usage:
   fatimg create [options] <path> [<path> ...]
@@ -53,6 +90,8 @@ Options:
 Examples:
   fatimg create --output disk.img ./boot/
   fatimg create --output boot.img.gz --size 512 --label BOOT ./EFI/
+  fatimg create --output disk.img --syslinux --syslinux-dir ~/syslinux-6.03 \
+      --part-type fat32 ./boot/
 `)
 	}
 	return cmd
@@ -87,6 +126,24 @@ func (c *CreateCommand) Run(args []string) error {
 		return fmt.Errorf("at least one valid path is required")
 	}
 	c.includes = c.fs.Args()
+
+	if _, err := mbrPartitionType(c.partType); err != nil {
+		c.fs.Usage()
+		return err
+	}
+
+	// SYSLINUX is GPL-licensed, so its files are not bundled; the user has
+	// to point at a copy.
+	if c.syslinuxBoot && c.syslinuxDir == "" {
+		c.fs.Usage()
+		return fmt.Errorf("--syslinux requires --syslinux-dir")
+	}
+	if c.syslinuxBoot {
+		c.syslinux, err = loadSyslinuxFiles(c.syslinuxDir)
+		if err != nil {
+			return err
+		}
+	}
 
 	// if outputPath ends with ".gz" then automatically turn on the doGzip flag
 	if strings.HasSuffix(c.outputPath, ".gz") {
@@ -239,13 +296,18 @@ func (c *CreateCommand) createDiskImage(tempFileName string) error {
 		return err
 	}
 
+	partType, err := mbrPartitionType(c.partType)
+	if err != nil {
+		return err
+	}
+
 	// create a partition table
 	table := &mbr.Table{
 		Partitions: []*mbr.Partition{
 			{
 				Start:    PartitionStart,
 				Size:     uint32(partitionSectors), // Note: limits partition to ~2TB
-				Type:     mbr.EFISystem,
+				Type:     partType,
 				Bootable: true,
 			},
 		},
@@ -259,6 +321,19 @@ func (c *CreateCommand) createDiskImage(tempFileName string) error {
 	fs, err := myDisk.CreateFilesystem(spec)
 	if err != nil {
 		return err
+	}
+
+	// Write the SYSLINUX files before anything else, so that ldlinux.sys
+	// lands at the front of the data area in one piece. It is addressed by
+	// a sector map with limited room for extents, so fragmenting it behind
+	// a few hundred megabytes of payload is a real failure mode.
+	if c.syslinuxBoot {
+		if err = writeFileBytes(fs, "/ldlinux.sys", ldlinuxPayload(c.syslinux.ldlinux)); err != nil {
+			return err
+		}
+		if err = writeFileBytes(fs, "/ldlinux.c32", c.syslinux.c32); err != nil {
+			return err
+		}
 	}
 
 	for _, include := range c.includes {
@@ -287,8 +362,49 @@ func (c *CreateCommand) createDiskImage(tempFileName string) error {
 			}
 		}
 	}
-	err = myDisk.Close()
-	return err
+	if err = myDisk.Close(); err != nil {
+		return err
+	}
+
+	// From here the image is just a file. go-diskfs leaves placeholders in
+	// two BPB fields that are wrong for a filesystem inside a partition, so
+	// correct them whether or not this image is going to be bootable.
+	img, err := os.OpenFile(tempFileName, os.O_RDWR, 0)
+	if err != nil {
+		return err
+	}
+	err = fixBPBGeometry(img, PartitionStart)
+	if cerr := img.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return err
+	}
+
+	if c.syslinuxBoot {
+		if err = installSyslinux(tempFileName, PartitionStart, c.syslinux); err != nil {
+			return fmt.Errorf("error installing SYSLINUX: %w", err)
+		}
+	}
+	return nil
+}
+
+// writeFileBytes writes an in-memory blob to a file in the image. Like
+// copyFile it writes in a single call so that FAT32 allocates the cluster
+// chain once.
+func writeFileBytes(fs filesystem.FileSystem, dst string, data []byte) error {
+	rw, err := fs.OpenFile(dst, os.O_CREATE|os.O_RDWR)
+	if err != nil {
+		return fmt.Errorf("error writing output file '%s': %s", dst, err.Error())
+	}
+	n, err := rw.Write(data)
+	if err != nil {
+		return err
+	}
+	if n != len(data) {
+		return fmt.Errorf("error writing output file '%s': %d bytes written, s/b %d", dst, n, len(data))
+	}
+	return rw.Close()
 }
 
 // reRootPath maps a source path to its destination inside the image by

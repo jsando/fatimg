@@ -2,14 +2,39 @@ package main
 
 // Legacy (BIOS) boot support, via SYSLINUX.
 //
+// Terminology, since this file is thick with it:
+//
+//   - LBA, Logical Block Address: a sector's number counting from the start
+//     of something, rather than the old cylinder/head/sector coordinates.
+//     "Absolute" LBAs count from the start of the disk; the sector numbers
+//     SYSLINUX works in count from the start of the partition, and the two
+//     differ by the partition's own starting LBA.
+//   - MBR, Master Boot Record: sector 0 of the disk. Holds up to 446 bytes
+//     of boot code, then the four-entry partition table, then 0x55AA.
+//   - VBR, Volume Boot Record, a.k.a. the boot sector: the first sector of a
+//     partition. On FAT it holds boot code wrapped around the BPB.
+//   - BPB, BIOS Parameter Block: the block of geometry fields inside the VBR
+//     that describes the filesystem -- sector size, cluster size, how many
+//     FATs, where the root directory starts, and so on. Bytes 11 to 89 of
+//     the sector on FAT32.
+//   - FAT, File Allocation Table: the array that chains clusters together.
+//     Entry N holds the number of the cluster that follows cluster N, or an
+//     end-of-chain marker. Walking it is how you find a file's data.
+//   - CHS, Cylinder/Head/Sector: the pre-LBA addressing scheme. Its geometry
+//     fields survive in the BPB and some boot code still falls back to them.
+//   - ADV, Auxiliary Data Vector: a 512-byte scratch area SYSLINUX keeps for
+//     itself at the end of ldlinux.sys, for things like "boot this once on
+//     the next reboot". Two copies, so an interrupted write cannot lose it.
+//     We write empty ones; nothing here uses the feature.
+//
 // Making a FAT32 image bootable by a PC BIOS takes four things beyond the
 // filesystem itself:
 //
 //  1. mbr.bin in the first 440 bytes of sector 0, to chainload the partition
 //     marked active;
-//  2. a BPB whose hidden-sector count is the partition's LBA — the SYSLINUX
-//     boot sector adds it to every filesystem-relative sector it reads, so a
-//     zero there sends it to the wrong end of the disk;
+//  2. a BPB whose hidden-sector count is the partition's starting LBA -- the
+//     SYSLINUX boot sector adds it to every partition-relative sector number
+//     it reads, so a zero there sends it to the wrong end of the disk;
 //  3. the SYSLINUX boot sector (ldlinux.bss) merged into the partition's
 //     first sector, leaving the BPB in place;
 //  4. ldlinux.sys on the filesystem, patched with the list of disk sectors it
@@ -38,37 +63,44 @@ const (
 	// are split so that no single one straddles a 64K boundary from here.
 	ldlinuxLoadAddr = 0x8000
 
-	// extentSize is sizeof(struct syslinux_extent): a 64-bit LBA and a
-	// 16-bit sector count, packed.
+	// extentSize is sizeof(struct syslinux_extent): a 64-bit starting LBA
+	// and a 16-bit count of how many sectors follow it, packed.
 	extentSize = 10
 
-	// advSize is the size of one Auxiliary Data Vector. Two of them are
-	// appended to ldlinux.sys on disk.
+	// advSize is the size of one ADV (Auxiliary Data Vector), SYSLINUX's
+	// own scratch area. Two of them are appended to ldlinux.sys on disk.
+	// The three magic numbers let SYSLINUX tell a good copy from a torn
+	// one: two signatures and a value the contents must sum to.
 	advSize   = 512
-	advMagic1 = 0x5a2d2fa5
-	advMagic2 = 0xa3041767
-	advMagic3 = 0xdd28bf64
+	advMagic1 = 0x5a2d2fa5 // head signature
+	advMagic2 = 0xa3041767 // what the body must sum to
+	advMagic3 = 0xdd28bf64 // tail signature
 
-	// ldlinuxName is the 8.3 short name of ldlinux.sys in the root
-	// directory, as it appears in the directory entry.
+	// ldlinuxName is the 8.3 short name of ldlinux.sys as it appears in the
+	// root directory: eight bytes of name and three of extension, space
+	// padded, with no dot between them.
 	ldlinuxName = "LDLINUX SYS"
 
-	// mbrBootstrapSize is the space before the disk signature and partition
-	// table in sector 0.
+	// mbrBootstrapSize is the space in the MBR before the disk signature
+	// and the partition table, which is all the boot code gets.
 	mbrBootstrapSize = 440
 
-	// bpbHiddenSectorsOffset is the offset of the 32-bit hidden-sector
-	// count within a FAT boot sector.
+	// bpbHiddenSectorsOffset is the offset within the boot sector of the
+	// BPB's 32-bit "hidden sectors" count -- the number of sectors before
+	// this partition, i.e. its own starting LBA.
 	bpbHiddenSectorsOffset = 0x1c
-	// bpbGeometryOffset is the offset of the 16-bit sectors-per-track
-	// field, immediately followed by the head count.
+	// bpbGeometryOffset is the offset of the BPB's 16-bit CHS
+	// sectors-per-track field, immediately followed by the head count.
 	bpbGeometryOffset = 0x18
-	// fatBackupBootSector is where go-diskfs mirrors the boot sector.
+	// fatBackupBootSector is the sector where FAT32 keeps a copy of the
+	// boot sector, and where go-diskfs writes one.
 	fatBackupBootSector = 6
 
-	// The two regions of a FAT32 boot sector that belong to SYSLINUX rather
-	// than to the filesystem: the jump and OEM name, and the boot code. The
-	// BPB between them, and the 0x55AA signature after it, are preserved.
+	// The two regions of a FAT32 boot sector (VBR) that belong to SYSLINUX
+	// rather than to the filesystem: the jump instruction and OEM name at
+	// the front, and the boot code after the BPB. The BPB between them
+	// (bytes 11 to 89) describes the filesystem and must survive, as must
+	// the 0x55AA signature in the last two bytes.
 	// From FAT_bsHead/FAT_bsCode in libinstaller/syslxint.h.
 	bsHeadStart, bsHeadEnd = 0, 11
 	bsCodeStart, bsCodeEnd = 90, 510
@@ -162,9 +194,14 @@ func ldlinuxPayload(ldlinux []byte) []byte {
 	return buf
 }
 
-// makeADV builds the pair of empty Auxiliary Data Vectors that SYSLINUX keeps
-// at the end of ldlinux.sys, following syslinux_reset_adv() and cleanup_adv()
-// in libinstaller/setadv.c. The two copies are identical.
+// makeADV builds the pair of empty ADVs (Auxiliary Data Vectors, SYSLINUX's
+// own scratch area) that live at the end of ldlinux.sys, following
+// syslinux_reset_adv() and cleanup_adv() in libinstaller/setadv.c.
+//
+// The layout is a head signature, a checksum chosen so the rest of the sector
+// sums to a second magic, the data, and a tail signature. Empty is all we
+// need: nothing fatimg does uses the features that store anything here. The
+// two copies are identical, which is what SYSLINUX expects to find.
 func makeADV() []byte {
 	adv := make([]byte, 2*advSize)
 	binary.LittleEndian.PutUint32(adv[0:4], advMagic1)
@@ -179,9 +216,11 @@ func makeADV() []byte {
 }
 
 // patchArea locates the patch area inside ldlinux.sys and reads the offsets
-// of the extended patch area out of it. All offsets are relative to the start
-// of the image except sect1ptr0 and sect1ptr1, which are offsets into the
-// boot sector.
+// of the extended patch area (EPA) out of it. The patch area is the struct
+// SYSLINUX leaves in its own image for an installer to fill in; the EPA is a
+// second struct it points at, holding the offsets of everything else that
+// needs writing. All offsets are relative to the start of the image except
+// sect1ptr0 and sect1ptr1, which are offsets into the boot sector.
 type patchArea struct {
 	offset int // of the patch area itself
 
@@ -315,10 +354,13 @@ func patchLdlinux(img, bootSect []byte, ldlinuxLen int, sectors []uint64) error 
 	return nil
 }
 
-// generateExtents packs a list of sectors into (lba, count) extents, merging
-// runs that are contiguous on disk. A run is broken when the corresponding
-// load address would cross a 64K boundary, since the boot sector reads through
-// a real-mode segmented address. Follows generate_extents() in syslxmod.c.
+// generateExtents packs a list of sector numbers into extents -- (starting
+// LBA, how many sectors follow) pairs -- merging runs that are contiguous on
+// disk, so that a file in one piece costs a couple of entries instead of one
+// per sector. A run is broken when it would reach 64K, the most a single BIOS
+// disk read can move, or when the address it loads to would cross a 64K
+// boundary in real-mode segmented memory. Follows generate_extents() in
+// syslxmod.c.
 func generateExtents(sectors []uint64, maxExtents int) ([]byte, error) {
 	out := make([]byte, 0, len(sectors)*extentSize)
 	addr := uint32(ldlinuxLoadAddr)
@@ -359,8 +401,13 @@ func generateExtents(sectors []uint64, maxExtents int) ([]byte, error) {
 	return out, nil
 }
 
-// fatLayout is the part of the FAT32 BPB needed to turn a cluster number into
-// a sector number relative to the start of the partition.
+// fatLayout is the part of the BPB needed to turn a cluster number into a
+// sector number relative to the start of the partition.
+//
+// A FAT32 volume is laid out as: reserved sectors (the boot sector and its
+// backup among them), then two copies of the FAT itself, then the data area
+// carved into fixed-size clusters. Cluster numbering starts at 2, which is
+// why converting one to a sector subtracts 2.
 type fatLayout struct {
 	sectorsPerCluster uint32
 	reservedSectors   uint32
@@ -411,8 +458,9 @@ func readFATLayout(img *os.File, partOffset int64) (fatLayout, error) {
 	return l, nil
 }
 
-// fatEOC is the first cluster value that terminates a chain; the top four bits
-// of a FAT32 entry are reserved.
+// fatEOC (end of chain) is the first FAT entry value that marks the last
+// cluster of a file rather than pointing at another one. Only the low 28 bits
+// of a FAT32 entry are the cluster number; the top four are reserved.
 const fatEOC = 0x0ffffff8
 
 // maxChainClusters bounds the walk so that a corrupt FAT cannot loop forever.
@@ -438,6 +486,11 @@ func (l fatLayout) chain(img *os.File, partOffset int64, start uint32) ([]uint32
 
 // findRootEntry returns the first cluster of a file in the root directory,
 // looked up by its 11-byte 8.3 short name.
+//
+// A directory is a list of 32-byte entries. Names too long or too mixed-case
+// for 8.3 get extra "long file name" entries in front of the real one, which
+// are skipped here: every file still has a short name, and that is what we
+// match on.
 func (l fatLayout) findRootEntry(img *os.File, partOffset int64, shortName string) (uint32, error) {
 	clusters, err := l.chain(img, partOffset, l.rootCluster)
 	if err != nil {
@@ -496,11 +549,16 @@ func ldlinuxSectorMap(img *os.File, partOffset int64, l fatLayout, n int) ([]uin
 	return sectors, nil
 }
 
-// fixBPBGeometry corrects the two BPB fields go-diskfs fills in with
-// placeholders: the hidden-sector count, which it always writes as zero, and
-// the CHS geometry, which it writes as 1/1 on the grounds that everything uses
-// LBA. Both are wrong for a filesystem inside a partition, and SYSLINUX needs
-// the first of them to find anything at all.
+// fixBPBGeometry corrects the two BPB (BIOS Parameter Block) fields go-diskfs
+// fills in with placeholders: the hidden-sector count, which it always writes
+// as zero, and the CHS geometry, which it writes as 1/1 on the grounds that
+// everything addresses by LBA these days.
+//
+// Both are wrong for a filesystem that lives inside a partition. Hidden
+// sectors is meant to say how many sectors precede the partition, and boot
+// code adds it to the partition-relative sector numbers it works in to get an
+// address it can hand to the BIOS -- so a zero there means every read lands
+// 1MB early, at the front of the disk.
 //
 // The backup boot sector is corrected too, so that it stays a copy.
 func fixBPBGeometry(img *os.File, partStart int64) error {

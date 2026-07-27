@@ -17,7 +17,7 @@ make build         # build with version info
 make test          # all tests; fails early if a required tool is missing
 make unit          # only the tests that need no external tools
 make integration   # round-trip and external validation tests, verbose
-make boot          # boot a --bios-boot image under QEMU, verbose
+make boot          # boot a --syslinux image under QEMU, verbose
 make syslinux      # download the SYSLINUX release the boot test installs
 make check         # what CI runs: gofmt, vet, tests
 make help          # list all targets
@@ -44,7 +44,7 @@ A small command pattern: `main.go` dispatches to one `Runner` per subcommand.
 | `cp` | `copy.go` | Extract to a local directory |
 
 `boot.go` is not a subcommand: it is the SYSLINUX installer behind
-`create --bios-boot`, and runs after the filesystem is closed, on the image as
+`create --syslinux`, and runs after the filesystem is closed, on the image as
 a plain file.
 
 Commands return errors; they must not call `os.Exit`. Tests drive
@@ -121,7 +121,7 @@ Four tiers, all under `go test`:
 3. **External validation** (`external_test.go`) — `mdir`, `mcopy` and
    `fsck.fat` check the image against independent FAT implementations, so a
    self-consistent but non-conforming filesystem cannot pass.
-4. **Boot** (`qemu_test.go`) — build a `--bios-boot` image and run it on an
+4. **Boot** (`qemu_test.go`) — build a `--syslinux` image and run it on an
    emulated PC, checking that SYSLINUX reached the `syslinux.cfg` in the image.
    Nothing below this tier can catch a broken bootloader install: an image with
    no boot code at all passes every other test here, because a boot sector is

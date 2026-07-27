@@ -10,7 +10,7 @@ fatimg can create, extract, and list files on the first partition (which must be
 
 The disk image file can optionally be gzipped, in which case fatimg will automatically gunzip it to a tmp file.
 
-With `--bios-boot` it can also make the image bootable by a legacy BIOS, by installing SYSLINUX. See
+With `--syslinux` it can also make the image bootable by a legacy BIOS, by installing SYSLINUX. See
 [Legacy BIOS boot](#legacy-bios-boot) below.
 
 WARNING: there will probably be breaking changes as I intend to extend it to support GPT
@@ -57,7 +57,7 @@ The first two provide `mdir`, `mcopy` and `fsck.fat`. The tests use them to
 check that disk images are valid according to independent FAT implementations,
 rather than only checking that fatimg agrees with itself — a filesystem can be
 self-consistent and still be wrong. QEMU is used by the boot test, which builds
-a `--bios-boot` image and runs it on an emulated PC; no filesystem check can
+a `--syslinux` image and runs it on an emulated PC; no filesystem check can
 tell you whether a bootloader install worked, because a boot sector is not part
 of the filesystem. They are a hard requirement: if a tool is missing the tests
 fail rather than skip, because a skipped check is indistinguishable from a
@@ -71,7 +71,7 @@ and fatimg is Apache-2.0.
 make test         # everything (fails early if a tool is missing)
 make unit         # only the tests that need no external tools
 make integration  # round-trip and validation tests, verbose
-make boot         # boot a --bios-boot image under QEMU, verbose
+make boot         # boot a --syslinux image under QEMU, verbose
 make check        # what CI runs: gofmt, vet, tests
 make help         # list all targets
 ```
@@ -91,8 +91,6 @@ Usage:
   fatimg create [options] <path> [<path> ...]
 
 Options:
-  -bios-boot
-    	make the image bootable by a legacy BIOS, using SYSLINUX
   -gzip
     	compress output file with gzip (automatic if output ends with '.gz')
   -label string
@@ -103,8 +101,10 @@ Options:
     	MBR partition type, "efi" or "fat32" (default "efi")
   -size int
     	partition size in megabytes (default 1024)
+  -syslinux
+    	make the image bootable by a legacy BIOS, using SYSLINUX
   -syslinux-dir string
-    	directory holding the SYSLINUX release to install (required with --bios-boot)
+    	directory holding the SYSLINUX release to install (required with --syslinux)
   -trim
     	trim disk image before compressing (truncate zero-filled sectors at the end)
 ```
@@ -117,14 +117,14 @@ fatimg create --output boot.img.gz --size 512 --label BOOT ./EFI/
 
 ### Legacy BIOS boot
 
-`--bios-boot` installs SYSLINUX into the image so a PC BIOS will boot it:
+`--syslinux` installs SYSLINUX into the image so a PC BIOS will boot it:
 the SYSLINUX MBR bootstrap in sector 0, its boot sector merged into the
 partition, and `ldlinux.sys` and `ldlinux.c32` written to the filesystem root.
 You supply the `syslinux.cfg`, as one of the paths copied in.
 
 ```bash
 fatimg create --output disk.img --size 512 \
-    --bios-boot --syslinux-dir ~/syslinux-6.03 --part-type fat32 ./boot/
+    --syslinux --syslinux-dir ~/syslinux-6.03 --part-type fat32 ./boot/
 ```
 
 SYSLINUX is not bundled with fatimg — it is GPL-licensed and fatimg is

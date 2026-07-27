@@ -23,7 +23,7 @@ type CreateCommand struct {
 	outputPath      string
 	partitionMB     int
 	trimImage       bool
-	biosBoot        bool
+	syslinuxBoot    bool
 	syslinuxDir     string
 	partType        string
 	syslinux        *syslinuxFiles
@@ -59,8 +59,8 @@ func NewCreateCommand() *CreateCommand {
 	cmd.fs.IntVar(&cmd.partitionMB, "size", 1024, "partition size in megabytes")
 	cmd.fs.BoolVar(&cmd.gzipOutput, "gzip", false, "compress output file with gzip (automatic if output ends with '.gz')")
 	cmd.fs.BoolVar(&cmd.trimImage, "trim", false, "trim disk image before compressing (truncate zero-filled sectors at the end)")
-	cmd.fs.BoolVar(&cmd.biosBoot, "bios-boot", false, "make the image bootable by a legacy BIOS, using SYSLINUX")
-	cmd.fs.StringVar(&cmd.syslinuxDir, "syslinux-dir", "", "directory holding the SYSLINUX release to install (required with --bios-boot)")
+	cmd.fs.BoolVar(&cmd.syslinuxBoot, "syslinux", false, "make the image bootable by a legacy BIOS, using SYSLINUX")
+	cmd.fs.StringVar(&cmd.syslinuxDir, "syslinux-dir", "", "directory holding the SYSLINUX release to install (required with --syslinux)")
 	cmd.fs.StringVar(&cmd.partType, "part-type", partTypeEFI, fmt.Sprintf("MBR partition type, %q or %q", partTypeEFI, partTypeFAT32))
 	cmd.fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, `Create a disk image with a FAT32 partition.
@@ -69,7 +69,7 @@ The contents of the partition are specified as a list of one or more paths.
 Folders are copied recursively, and include the folder name itself
 unless it ends with a trailing '/'.
 
-With --bios-boot the image is also made bootable by a legacy BIOS. This
+With --syslinux the image is also made bootable by a legacy BIOS. This
 installs SYSLINUX, whose files are read from --syslinux-dir; they are not
 bundled with fatimg because SYSLINUX is licensed under the GPL. Point it at
 an unpacked syslinux release tarball, which ships the mbr.bin, ldlinux.bss,
@@ -87,7 +87,7 @@ Options:
 Examples:
   fatimg create --output disk.img ./boot/
   fatimg create --output boot.img.gz --size 512 --label BOOT ./EFI/
-  fatimg create --output disk.img --bios-boot --syslinux-dir ~/syslinux-6.03 \
+  fatimg create --output disk.img --syslinux --syslinux-dir ~/syslinux-6.03 \
       --part-type fat32 ./boot/
 `)
 	}
@@ -131,11 +131,11 @@ func (c *CreateCommand) Run(args []string) error {
 
 	// SYSLINUX is GPL-licensed, so its files are not bundled; the user has
 	// to point at a copy.
-	if c.biosBoot && c.syslinuxDir == "" {
+	if c.syslinuxBoot && c.syslinuxDir == "" {
 		c.fs.Usage()
-		return fmt.Errorf("--bios-boot requires --syslinux-dir")
+		return fmt.Errorf("--syslinux requires --syslinux-dir")
 	}
-	if c.biosBoot {
+	if c.syslinuxBoot {
 		c.syslinux, err = loadSyslinuxFiles(c.syslinuxDir)
 		if err != nil {
 			return err
@@ -324,7 +324,7 @@ func (c *CreateCommand) createDiskImage(tempFileName string) error {
 	// lands at the front of the data area in one piece. It is addressed by
 	// a sector map with limited room for extents, so fragmenting it behind
 	// a few hundred megabytes of payload is a real failure mode.
-	if c.biosBoot {
+	if c.syslinuxBoot {
 		if err = writeFileBytes(fs, "/ldlinux.sys", ldlinuxPayload(c.syslinux.ldlinux)); err != nil {
 			return err
 		}
@@ -378,7 +378,7 @@ func (c *CreateCommand) createDiskImage(tempFileName string) error {
 		return err
 	}
 
-	if c.biosBoot {
+	if c.syslinuxBoot {
 		if err = installSyslinux(tempFileName, PartitionStart, c.syslinux); err != nil {
 			return fmt.Errorf("error installing SYSLINUX: %w", err)
 		}

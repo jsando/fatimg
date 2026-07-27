@@ -98,7 +98,7 @@ func TestBIOSBootInQEMU(t *testing.T) {
 			// SYSLINUX looks for it.
 			image := filepath.Join(dir, "boot.img")
 			if err := runCmd(t, "create", "--output", image, "--size", "64",
-				"--bios-boot", "--syslinux-dir", syslinux,
+				"--syslinux", "--syslinux-dir", syslinux,
 				"--part-type", partType, src+"/"); err != nil {
 				t.Fatalf("create: %v", err)
 			}

@@ -10,7 +10,7 @@ LDFLAGS    := -X 'main.version=$(VERSION)' -X 'main.commit=$(COMMIT)' -X 'main.b
 REQUIRED_TOOLS := mdir mcopy fsck.fat qemu-system-x86_64
 
 # The SYSLINUX release the boot test installs into an image. It is downloaded
-# rather than vendored because it is GPL-licensed and fatimg is Apache-2.0.
+# rather than vendored so that we do not redistribute someone else's binaries.
 SYSLINUX_VERSION := 6.03
 SYSLINUX_CACHE   := .syslinux
 SYSLINUX_DIR     := $(SYSLINUX_CACHE)/syslinux-$(SYSLINUX_VERSION)
@@ -41,13 +41,14 @@ unit: ## Run only fast tests (no external tools needed)
 integration: tools-check syslinux ## Run image round-trip and external validation tests verbosely
 	go test -count=1 -v -run 'TestRoundTrip|TestList|TestCreate|TestGzip|TestMtools|TestFsck' ./...
 
-boot: tools-check syslinux ## Boot a --bios-boot image under QEMU
+boot: tools-check syslinux ## Boot a --syslinux image under QEMU
 	go test -count=1 -v -run TestBIOSBoot ./...
 
 syslinux: $(SYSLINUX_DIR) ## Download the SYSLINUX release the boot test installs
 
-# SYSLINUX is not vendored: it is GPL-2.0 and fatimg is Apache-2.0, and the
-# same reasoning keeps it out of the binary. The tarball ships the prebuilt
+# SYSLINUX is not vendored: shipping someone else's binaries inside ours would
+# mean carrying their version skew and redistribution obligations, and the same
+# reasoning keeps it out of the binary. The tarball ships the prebuilt
 # mbr.bin, ldlinux.bss, ldlinux.sys and ldlinux.c32 that an install needs;
 # most distribution packages do not, because their installer embeds them.
 $(SYSLINUX_DIR):

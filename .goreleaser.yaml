@@ -51,6 +51,6 @@ brews:
     directory: Formula
     homepage: "https://github.com/jsando/fatimg"
     description: "Go utility for creating and managing FAT32 boot (EFI) partition disk images"
-    license: "MIT"
+    license: "GPL-3.0-or-later"
     test: |
       system "#{bin}/fatimg", "--version"

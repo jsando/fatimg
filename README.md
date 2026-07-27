@@ -64,8 +64,7 @@ fail rather than skip, because a skipped check is indistinguishable from a
 passing one.
 
 The boot test also needs a SYSLINUX release to install. `make` downloads one
-into `.syslinux/` for you; it is not vendored because SYSLINUX is GPL-licensed
-and fatimg is Apache-2.0.
+into `.syslinux/` for you rather than vendoring it into the repository.
 
 ```bash
 make test         # everything (fails early if a tool is missing)
@@ -127,10 +126,9 @@ fatimg create --output disk.img --size 512 \
     --syslinux --syslinux-dir ~/syslinux-6.03 --part-type fat32 ./boot/
 ```
 
-SYSLINUX is not bundled with fatimg — it is GPL-licensed and fatimg is
-Apache-2.0 — so `--syslinux-dir` has to point at your own copy. It needs
-`mbr.bin`, `ldlinux.bss`, `ldlinux.sys` and `ldlinux.c32`, and they should all
-come from the same release. An unpacked
+SYSLINUX is not bundled with fatimg, so `--syslinux-dir` has to point at your
+own copy. It needs `mbr.bin`, `ldlinux.bss`, `ldlinux.sys` and `ldlinux.c32`,
+and they should all come from the same release. An unpacked
 [syslinux release tarball](https://mirrors.edge.kernel.org/pub/linux/utils/boot/syslinux/)
 works as-is: the tarball ships them prebuilt. Most distribution packages do
 **not**, because their `syslinux` installer has `ldlinux.bss` and `ldlinux.sys`
@@ -203,3 +201,18 @@ Writing ./extracted/system/rootfs.squashfs (149.1 MB)
 rootfs.squashfs: 100.0% (523.1 MB/s, ~0s remaining)
 ```
 
+## License
+
+fatimg is licensed under the [GNU General Public License, version 3 or
+later](LICENSE).
+
+It was previously Apache-2.0. The BIOS boot support in `boot.go` is derived
+from [SYSLINUX](https://www.syslinux.org/) — `syslinux_patch()` and
+`generate_extents()` in `libinstaller/syslxmod.c`, and `cleanup_adv()` in
+`libinstaller/setadv.c`, copyright 1998-2008 H. Peter Anvin and 2009-2014 Intel
+Corporation. Those are GPL-2.0-or-later, so the project moved to GPLv3 rather
+than misrepresent what it is. Releases up to and including the last Apache-2.0
+tag remain available under those terms.
+
+SYSLINUX itself is not distributed with fatimg, in source or binary form. The
+dependencies are all MIT or BSD licensed.

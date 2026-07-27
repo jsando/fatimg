@@ -1,3 +1,18 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2023-2026 Jason Sando
+//
+// The SYSLINUX installation in this file is derived from syslinux-6.03,
+// specifically syslinux_patch() and generate_extents() in
+// libinstaller/syslxmod.c and cleanup_adv() in libinstaller/setadv.c:
+//
+//	Copyright 1998-2008 H. Peter Anvin - All Rights Reserved
+//	Copyright 2009-2014 Intel Corporation; author H. Peter Anvin
+//
+// Those files are licensed under the GNU General Public License, version 2 or
+// (at your option) any later version. fatimg takes the later option and is
+// distributed under version 3; this is why the project is GPL rather than
+// permissively licensed.
+
 package main
 
 // Legacy (BIOS) boot support, via SYSLINUX.
@@ -144,8 +159,10 @@ func findSyslinuxFile(dir, name string) ([]byte, error) {
 }
 
 // loadSyslinuxFiles reads the SYSLINUX files out of dir, which should be a
-// syslinux release directory. The files are not embedded in fatimg because
-// SYSLINUX is GPL-2.0 and fatimg is Apache-2.0.
+// syslinux release directory. They are read at run time rather than embedded
+// so that fatimg ships as its own work: embedding them would put someone
+// else's binaries inside ours, with their own version skew and redistribution
+// obligations, for no gain over pointing at a release.
 func loadSyslinuxFiles(dir string) (*syslinuxFiles, error) {
 	s := &syslinuxFiles{}
 	for _, f := range []struct {

@@ -86,9 +86,14 @@ time, along with a checksum ldlinux.sys verifies against itself at boot.
 - ldlinux.sys is written before the user's files so it lands contiguously.
   It is addressed by an extent list with room for 192 entries, and a fragmented
   one would overflow it; `generateExtents` errors rather than truncating.
-- SYSLINUX is not vendored or embedded. It is GPL-2.0 and fatimg is Apache-2.0,
-  so the files come from `--syslinux-dir` at run time. Do not add a `go:embed`
-  of them without settling that first.
+- SYSLINUX is not vendored or embedded; the files come from `--syslinux-dir` at
+  run time. Do not add a `go:embed` of them — that would put someone else's
+  binaries inside ours, with their version skew and redistribution obligations,
+  and it is what the `--syslinux-dir` search paths exist to avoid.
+- This file is why the project is GPLv3. The patcher is derived from GPL-2.0+
+  syslinux source, and `boot.go` carries the attribution header; keep it, and
+  keep new work here compatible with those terms. See the License section of
+  README.md.
 - A FAT32 with 65524 clusters or fewer reads as FAT16 by the standard rule, and
   SYSLINUX applies it. `installSyslinux` rejects such an image; without that
   check the symptom is a boot that prints the SYSLINUX banner and then cannot

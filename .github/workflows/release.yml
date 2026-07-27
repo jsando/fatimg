@@ -21,10 +21,17 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.25'
-      - name: Install FAT validation tools
-        run: sudo apt-get update && sudo apt-get install -y mtools dosfstools
+      # Kept in step with the same steps in ci.yml. This job is the gate on
+      # publishing, so it has to run the same tiers, boot test included.
+      - name: Install validation tools
+        run: sudo apt-get update && sudo apt-get install -y mtools dosfstools qemu-system-x86
+      - name: Fetch SYSLINUX
+        # Not vendored: we do not redistribute someone else's binaries.
+        run: make syslinux
       - name: Test
-        run: go test -count=1 ./...
+        # Run through make so the boot test is pointed at the SYSLINUX release
+        # fetched above.
+        run: make test
 
   goreleaser:
     needs: test

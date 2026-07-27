@@ -2,6 +2,13 @@ module github.com/jsando/fatimg
 
 go 1.25.0
 
+// Go 1.25.4 carries the fix for golang/go#69255: under qemu-user on an arm64
+// host the amd64 runtime is handed addresses above 47 bits and dies with
+// "taggedPointerPack invalid packing" (older Go: "lfstack.push"). Building
+// with anything earlier ships a binary that cannot run in an emulated amd64
+// container. See fatimg#9. Do not lower this.
+toolchain go1.25.4
+
 require (
 	github.com/diskfs/go-diskfs v1.6.0
 	github.com/dustin/go-humanize v1.0.1

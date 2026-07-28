@@ -64,7 +64,7 @@ Usage:
 Commands:
   create    Create a disk image with an EFI partition
   ls        List contents of the first partition in a disk image
-  cp        Copy files from a disk image to a local directory
+  cp        Copy files into or out of a disk image
 
 Use "fatimg <command> --help" for more information about a command.
 Use "fatimg --version" to see version information.

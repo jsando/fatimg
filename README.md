@@ -6,7 +6,7 @@ instead of mtools or loopback mounts.
 Assuming you have your linux kernel, initrd, and whatever other files you need you can point this program
 at the folder with them and it will install them into a disk image with an EFI partition.
  
-fatimg can create, extract, and list files on the first partition (which must be FAT32) of a disk image.
+fatimg can create, list, and copy files into and out of the first partition (which must be FAT32) of a disk image.
 
 The disk image file can optionally be gzipped, in which case fatimg will automatically gunzip it to a tmp file.
 
@@ -173,33 +173,63 @@ $ fatimg ls -long disk.img
 [149.1MB]  Mar 15 2024  /system/rootfs.squashfs
 ```
 
-### Copy/Extract files
+### Copy files in and out
 
 ```
-Copy files from a disk image to a local directory.
+Copy files into or out of a disk image.
 
-Extracts all files from the first partition of the disk image to the
-specified destination directory. The disk image file can optionally be
-gzipped, in which case fatimg will automatically decompress it.
+A path inside the image is written as <disk-image>:<path>, like scp, and has to
+be absolute: disk.img:/EFI/BOOT. Whichever side of the command line carries one
+decides the direction; the other side is the local filesystem. Sources may not
+span both sides.
+
+Folders are copied recursively, and include the folder name itself unless the
+source ends with a trailing '/', the same rule 'create' uses. When the
+destination is an existing directory, or is written with a trailing separator,
+or there is more than one source, files are copied into it under their own
+names; otherwise the destination names the copy.
+
+The disk image file can optionally be gzipped, in which case fatimg will
+decompress it, and -- if anything was written -- compress it again afterwards.
 
 Usage:
-  fatimg cp <disk-image> <dest-directory>
+  fatimg cp [options] <source> [<source> ...] <dest>
+  fatimg cp [options] <disk-image> <dest-directory>
+
+The second form extracts the whole image, and is what fatimg cp has always
+done.
 
 Options:
   -progress
     	show progress bar with transfer rate for large files
 ```
 
-Example:
+Examples:
 ```bash
-# Extract with progress information
+# Extract everything, with progress information
 $ fatimg cp -progress disk.img ./extracted/
 Writing ./extracted/efi/boot/bootx64.efi (167.4 KB)
 Writing ./extracted/system/initrd.img (27.3 MB)
 initrd.img: 100.0% (845.2 MB/s, ~0s remaining)
-Writing ./extracted/system/rootfs.squashfs (149.1 MB)
-rootfs.squashfs: 100.0% (523.1 MB/s, ~0s remaining)
+
+# Extract one file, or one folder
+$ fatimg cp disk.img:/efi/boot/syslinux.cfg ./
+$ fatimg cp disk.img:/efi ./out/
+
+# Replace a config file in an image without rebuilding it
+$ fatimg cp syslinux.cfg disk.img:/efi/boot/
+
+# Add several files, or a folder's contents, to a compressed image
+$ fatimg cp vmlinuz initrd.img boot.img.gz:/system/
+$ fatimg cp ./boot/ boot.img.gz:/
 ```
+
+Copying into an image writes to the filesystem that is already there, so an
+image built with `--syslinux` stays bootable. The one file `cp` will not
+overwrite is `/ldlinux.sys`: SYSLINUX finds it through a map of the sectors it
+occupies, recorded when it was installed, and a replacement written through the
+filesystem produces an image that passes every check and does not boot. Rebuild
+with `create --syslinux` instead.
 
 ## License
 

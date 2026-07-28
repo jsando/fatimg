@@ -14,9 +14,14 @@ import (
 	gzip "github.com/klauspost/pgzip"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 )
+
+// ldlinuxSysPath is where the SYSLINUX core lives in the image. It has to be in
+// the root, and it is the one file `cp` will not overwrite.
+const ldlinuxSysPath = "/ldlinux.sys"
 
 type CreateCommand struct {
 	fs              *flag.FlagSet
@@ -256,27 +261,33 @@ scanLoop:
 }
 
 func (c *CreateCommand) compressOutput(inputFileName string, outputFileName string) error {
-	gzipFile, err := os.Create(outputFileName)
+	if err := gzipFile(inputFileName, outputFileName); err != nil {
+		return err
+	}
+	return os.Remove(inputFileName)
+}
+
+// gzipFile compresses inputFileName to outputFileName, leaving the input in
+// place. `cp` uses it to put a gzipped image back together after writing to it.
+func gzipFile(inputFileName string, outputFileName string) error {
+	out, err := os.Create(outputFileName)
 	if err != nil {
 		return err
 	}
-	defer gzipFile.Close()
+	defer out.Close()
 	reader, err := os.Open(inputFileName)
 	if err != nil {
 		return err
 	}
 	defer reader.Close()
-	w := gzip.NewWriter(gzipFile)
+	w := gzip.NewWriter(out)
 	//w.SetConcurrency(100000, 10)
 	_, err = io.Copy(w, reader)
 	err2 := w.Close()
 	if err != nil {
 		return err
 	}
-	if err2 != nil {
-		return err2
-	}
-	return os.Remove(inputFileName)
+	return err2
 }
 
 const MB = 1024 * 1024
@@ -328,7 +339,7 @@ func (c *CreateCommand) createDiskImage(tempFileName string) error {
 	// a sector map with limited room for extents, so fragmenting it behind
 	// a few hundred megabytes of payload is a real failure mode.
 	if c.syslinuxBoot {
-		if err = writeFileBytes(fs, "/ldlinux.sys", ldlinuxPayload(c.syslinux.ldlinux)); err != nil {
+		if err = writeFileBytes(fs, ldlinuxSysPath, ldlinuxPayload(c.syslinux.ldlinux)); err != nil {
 			return err
 		}
 		if err = writeFileBytes(fs, "/ldlinux.c32", c.syslinux.c32); err != nil {
@@ -349,7 +360,7 @@ func (c *CreateCommand) createDiskImage(tempFileName string) error {
 			}
 			if finfo.IsDir() {
 				prefix := filepath.Dir(path)
-				err = copyDir(prefix, path, fs)
+				err = copyDir(prefix, path, "/", fs)
 				if err != nil {
 					return err
 				}
@@ -430,8 +441,9 @@ func reRootPath(prefix string, path string) (string, error) {
 // /a/b/c/d/ --> 		c/d/
 // /a/b/c/f.txt -> 		c/f.txt
 // this is re-rooting folder c to / from /a/b ... therefore the trick is to
-// pass in the prefix to subtract
-func copyDir(prefix string, path string, fs filesystem.FileSystem) error {
+// pass in the prefix to subtract. dstRoot is where the re-rooted tree lands in
+// the image: "/" for create, or the destination folder for `cp`.
+func copyDir(prefix string, path string, dstRoot string, fs filesystem.FileSystem) error {
 	files, err := os.ReadDir(path)
 	if err != nil {
 		return err
@@ -441,24 +453,53 @@ func copyDir(prefix string, path string, fs filesystem.FileSystem) error {
 	if err != nil {
 		return err
 	}
-	fs.Mkdir(targetPath)
+	targetPath = imagePath(dstRoot, targetPath)
+	if err := fs.Mkdir(targetPath); err != nil {
+		return fmt.Errorf("error creating directory '%s': %w", targetPath, err)
+	}
 	for _, file := range files {
 		if file.IsDir() {
-			copyDir(prefix, filepath.Join(path, file.Name()), fs)
+			err = copyDir(prefix, filepath.Join(path, file.Name()), dstRoot, fs)
 		} else {
-			copyFile(filepath.Join(path, file.Name()), filepath.Join(targetPath, file.Name()), fs)
+			err = copyFile(filepath.Join(path, file.Name()), imagePath(targetPath, file.Name()), fs)
+		}
+		if err != nil {
+			return err
 		}
 	}
 	return nil
 }
 
+// imagePath joins path elements for use inside the image, which uses forward
+// slashes whatever the host does.
+func imagePath(elem ...string) string {
+	for i, e := range elem {
+		elem[i] = filepath.ToSlash(e)
+	}
+	return path.Join(elem...)
+}
+
 func copyFile(src string, dst string, fs filesystem.FileSystem) error {
+	// ldlinux.sys is located by a map of the sectors it occupies, stamped into
+	// it at install time; rewriting it through the filesystem leaves an image
+	// that still passes every check here and no longer boots. Overwriting one
+	// that is already in the image is therefore refused. A user's own
+	// ldlinux.sys copied into an image that has none is left alone.
+	if strings.EqualFold(path.Clean(dst), ldlinuxSysPath) {
+		if _, err := imageStat(fs, dst); err == nil {
+			return fmt.Errorf("refusing to overwrite %s: it is the SYSLINUX bootloader, "+
+				"which is located by a sector map written when it was installed; "+
+				"rebuild the image with 'create --syslinux' instead", dst)
+		}
+	}
 	file, err := os.Open(src)
 	if err != nil {
 		return fmt.Errorf("error opening file '%s': %s\n", src, err.Error())
 	}
 	defer file.Close()
-	rw, err := fs.OpenFile(dst, os.O_CREATE|os.O_RDWR)
+	// O_TRUNC because the destination may already hold a longer file, whose
+	// tail would otherwise survive the copy.
+	rw, err := fs.OpenFile(dst, os.O_CREATE|os.O_RDWR|os.O_TRUNC)
 	if err != nil {
 		return fmt.Errorf("error writing output file '%s': %s\n", dst, err.Error())
 	}

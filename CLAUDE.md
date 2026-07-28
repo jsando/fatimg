@@ -41,7 +41,7 @@ A small command pattern: `main.go` dispatches to one `Runner` per subcommand.
 |---|---|---|
 | `create` | `create.go` | MBR-partitioned disk with a single FAT32 partition; recursively copies files in |
 | `ls` | `list.go` | Also holds the gzip sniffing and temp-file decompression shared with `cp` |
-| `cp` | `copy.go` | Extract to a local directory |
+| `cp` | `copy.go` | Copies both ways: extract to a local directory, or write into an existing image |
 
 `boot.go` is not a subcommand: it is the SYSLINUX installer behind
 `create --syslinux`, and runs after the filesystem is closed, on the image as
@@ -62,6 +62,20 @@ are switched to `flag.ContinueOnError`.
   removing it if anything fails.
 - `copyFile` reads the whole file into memory before writing so that FAT32
   allocates the cluster chain once; see go-diskfs issue #130.
+- `cp` is the only command that writes to a filesystem it did not just create.
+  `imageSession` in `copy.go` owns that: it decompresses a gzipped image to a
+  temp file, and on a successful write compresses it again over the original
+  through a temp file and a rename. Nothing is written back if the copy failed,
+  so a botched run cannot cost you the image you had.
+- `copyDir` and `copyFile` in `create.go` are shared by `create` and `cp`; the
+  `dstRoot` argument is what lets `cp` land a tree somewhere other than `/`.
+  `copyFile` opens with `O_TRUNC` because `cp` overwrites files that are
+  already there, and refuses to overwrite an existing `/ldlinux.sys` -- see the
+  SYSLINUX section below for why that one is special.
+- `cp` tells the two sides apart by the `image:/path` form, which requires the
+  path inside the image to be absolute. The image is a path in its own right,
+  so the split is on the last colon followed by a slash; that is what keeps a
+  local `/tmp/a:b` from being read as a reference to an image.
 - go-diskfs writes placeholders into two BPB fields: hidden sectors is always
   0, and the CHS geometry is 1/1. Both are wrong for a filesystem inside a
   partition, and SYSLINUX adds hidden sectors to every sector it reads, so
@@ -94,6 +108,10 @@ time, along with a checksum ldlinux.sys verifies against itself at boot.
   syslinux source, and `boot.go` carries the attribution header; keep it, and
   keep new work here compatible with those terms. See the License section of
   README.md.
+- Files can be added to an installed image afterwards -- `cp` into it does not
+  move what is already there -- but ldlinux.sys itself cannot be rewritten
+  through the filesystem, because the sector map is stamped in at install time
+  and the new copy would not be where the map says. `copyFile` refuses it.
 - A FAT32 with 65524 clusters or fewer reads as FAT16 by the standard rule, and
   SYSLINUX applies it. `installSyslinux` rejects such an image; without that
   check the symptom is a boot that prints the SYSLINUX banner and then cannot
@@ -120,14 +138,20 @@ Four tiers, all under `go test`:
 
 1. **Unit** (`create_test.go`, `boot_test.go`) — `trimFile` across chunk
    boundaries, path re-rooting, and the SYSLINUX patch arithmetic.
-2. **Round-trip** (`roundtrip_test.go`) — create an image from a fixture tree
-   and extract it again, asserting byte-identical contents across the option
-   matrix. This is the tier that catches a broken `create`/`ls`/`cp`.
+2. **Round-trip** (`roundtrip_test.go`, `copy_test.go`) — create an image from a
+   fixture tree and extract it again, asserting byte-identical contents across
+   the option matrix. This is the tier that catches a broken `create`/`ls`/`cp`.
+   `copy_test.go` covers the destination and source forms of `cp` in both
+   directions, and checks after every insert that what was already in the image
+   is still byte-identical.
 3. **External validation** (`external_test.go`) — `mdir`, `mcopy` and
    `fsck.fat` check the image against independent FAT implementations, so a
    self-consistent but non-conforming filesystem cannot pass.
 4. **Boot** (`qemu_test.go`) — build a `--syslinux` image and run it on an
    emulated PC, checking that SYSLINUX reached the `syslinux.cfg` in the image.
+   One of these copies a replacement `syslinux.cfg` in with `cp` first, which
+   is the only way to know that writing to an installed image leaves it
+   bootable.
    Nothing below this tier can catch a broken bootloader install: an image with
    no boot code at all passes every other test here, because a boot sector is
    not part of the filesystem as far as `fsck.fat` is concerned.

@@ -160,6 +160,52 @@ func TestFsckAcceptsFilesystem(t *testing.T) {
 	}
 }
 
+// TestFsckAcceptsImageCopiedInto checks the filesystem after `cp` has written
+// to an image it did not create. Adding a file allocates clusters and rewrites
+// directory entries in a filesystem built by an earlier run, which nothing else
+// in this suite exercises; an independent checker is the only thing that will
+// say whether the result is still a valid FAT32.
+func TestFsckAcceptsImageCopiedInto(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping external validation in short mode")
+	}
+	image := buildValidationImage(t, 64)
+
+	dir := t.TempDir()
+	added := filepath.Join(dir, "syslinux.cfg")
+	if err := os.WriteFile(added, []byte("DEFAULT linux\n"), 0644); err != nil {
+		t.Fatalf("writing source file: %v", err)
+	}
+	// One into a folder that already exists, one into a folder that does not,
+	// so that both an updated and a newly created directory are checked.
+	if err := runCmd(t, "cp", added, image+":/EFI/BOOT/"); err != nil {
+		t.Fatalf("cp into existing folder: %v", err)
+	}
+	if err := runCmd(t, "cp", added, image+":/boot/grub/"); err != nil {
+		t.Fatalf("cp into new folder: %v", err)
+	}
+
+	partition := filepath.Join(dir, "part.img")
+	if err := extractPartition(image, partition); err != nil {
+		t.Fatalf("extracting partition: %v", err)
+	}
+	out, err := runTool(t, "fsck.fat", "-n", partition)
+	if err != nil {
+		t.Fatalf("fsck.fat rejected an image that was copied into: %v\n%s", err, out)
+	}
+
+	// mtools must see the new files too, not just fatimg.
+	out, err = runTool(t, "mdir", "-i", mtoolsImage(image), "-/", "::/")
+	if err != nil {
+		t.Fatalf("mdir failed: %v\n%s", err, out)
+	}
+	for _, want := range []string{"syslinux.cfg", "grub"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("mdir output missing %q after copying into the image:\n%s", want, out)
+		}
+	}
+}
+
 // extractPartition copies the FAT32 partition out of a disk image.
 func extractPartition(image, dest string) error {
 	in, err := os.Open(image)

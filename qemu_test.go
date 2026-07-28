@@ -118,6 +118,61 @@ func TestBIOSBootInQEMU(t *testing.T) {
 	}
 }
 
+// TestBootAfterCopyingIntoImage builds a bootable image, replaces its
+// syslinux.cfg with `cp`, and boots it. Copying into an existing image
+// allocates clusters and rewrites directory entries around an ldlinux.sys that
+// is addressed by a fixed map of the sectors it occupies, so this is the one
+// tier that can say whether patching a config file leaves the image bootable.
+func TestBootAfterCopyingIntoImage(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping boot test in short mode")
+	}
+	qemu := qemuBinary(t)
+	syslinux := syslinuxDir(t)
+
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatalf("creating source tree: %v", err)
+	}
+	// The image is built with a config naming a different label, so reaching
+	// bootMarker can only mean the copied-in file is the one SYSLINUX read.
+	placeholder := strings.Replace(bootConfig, bootMarker, "placeholder-label", 1)
+	if err := os.WriteFile(filepath.Join(src, "syslinux.cfg"), []byte(placeholder), 0o644); err != nil {
+		t.Fatalf("writing placeholder syslinux.cfg: %v", err)
+	}
+
+	image := filepath.Join(dir, "boot.img")
+	if err := runCmd(t, "create", "--output", image, "--size", "64",
+		"--syslinux", "--syslinux-dir", syslinux,
+		"--part-type", partTypeFAT32, src+"/"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	// Also add a file, so the copy allocates new clusters rather than only
+	// rewriting one that is already there.
+	replacement := filepath.Join(dir, "syslinux.cfg")
+	if err := os.WriteFile(replacement, []byte(bootConfig), 0o644); err != nil {
+		t.Fatalf("writing replacement syslinux.cfg: %v", err)
+	}
+	filler := filepath.Join(dir, "filler.bin")
+	if err := os.WriteFile(filler, make([]byte, 512*1024), 0o644); err != nil {
+		t.Fatalf("writing filler: %v", err)
+	}
+	if err := runCmd(t, "cp", replacement, filler, image+":/"); err != nil {
+		t.Fatalf("cp into bootable image: %v", err)
+	}
+
+	out := bootImage(t, qemu, image, 90*time.Second)
+	if !strings.Contains(out, "SYSLINUX") {
+		t.Errorf("SYSLINUX never reached the serial console after a copy into the image.\nSerial output:\n%s", out)
+	}
+	if !strings.Contains(out, bootMarker) {
+		t.Errorf("SYSLINUX did not read the copied-in syslinux.cfg (no %q in output).\nSerial output:\n%s",
+			bootMarker, out)
+	}
+}
+
 // bootImage runs the image under QEMU until the marker appears on the serial
 // port or the deadline passes, and returns whatever the serial port produced.
 func bootImage(t *testing.T, qemu, image string, timeout time.Duration) string {

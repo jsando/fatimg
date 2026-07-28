@@ -458,6 +458,73 @@ func TestCopyIntoGzippedImage(t *testing.T) {
 	}
 }
 
+// TestCopyIntoTrimmedImage copies into an image whose file is far shorter than
+// the filesystem inside it says it is, which is what --trim leaves behind.
+// Nothing grows the file first: go-diskfs allocates a cluster from the FAT and
+// writes at its offset, and the write past the end of the file is what extends
+// it. This checks that the data written beyond the old end reads back, and that
+// the copy stays inside the partition rather than running off the end of it.
+func TestCopyIntoTrimmedImage(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping image round-trip in short mode")
+	}
+
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src")
+	writeTree(t, src, []fileSpec{{"EFI/BOOT/bootx64.efi", 4096}})
+
+	image := filepath.Join(dir, "disk.img")
+	if err := runCmd(t, "create", "--output", image, "--size", "64", "--trim",
+		src+string(filepath.Separator)); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	const partitionBytes = PartitionStart*BlockSize + 64*MB
+	info, err := os.Stat(image)
+	if err != nil {
+		t.Fatalf("stat image: %v", err)
+	}
+	trimmed := info.Size()
+	// If --trim ever stops truncating, this test would silently become an
+	// ordinary copy into a full-sized image and prove nothing.
+	if trimmed >= partitionBytes/2 {
+		t.Fatalf("--trim left a %d byte image, expected far less than the %d byte partition",
+			trimmed, partitionBytes)
+	}
+
+	// Larger than what is left of the file, so most of it lands past the end
+	// and the file has to grow to hold it.
+	payload := fileSpec{"payload.bin", 2_000_000}.content()
+	local := filepath.Join(dir, "payload.bin")
+	if err := os.WriteFile(local, payload, 0644); err != nil {
+		t.Fatalf("writing source file: %v", err)
+	}
+	if err := runCmd(t, "cp", local, image+":/"); err != nil {
+		t.Fatalf("cp into trimmed image: %v", err)
+	}
+
+	if got := readFromImage(t, image, "/payload.bin"); !bytes.Equal(got, payload) {
+		t.Errorf("/payload.bin reads back as %d bytes, want %d", len(got), len(payload))
+	}
+	if got := readFromImage(t, image, "/EFI/BOOT/bootx64.efi"); len(got) != 4096 {
+		t.Errorf("existing file is %d bytes after the copy, want 4096", len(got))
+	}
+
+	info, err = os.Stat(image)
+	if err != nil {
+		t.Fatalf("stat image: %v", err)
+	}
+	if info.Size() <= trimmed {
+		t.Errorf("image is still %d bytes after writing %d past its end", info.Size(), len(payload))
+	}
+	// The FAT bounds the allocation, so a copy can un-trim an image but must
+	// never push it past the partition it lives in.
+	if info.Size() > partitionBytes {
+		t.Errorf("image grew to %d bytes, past the end of its %d byte partition",
+			info.Size(), partitionBytes)
+	}
+}
+
 // TestCopyRefusesToOverwriteLdlinux checks the guard that keeps a copy from
 // quietly breaking a bootable image. ldlinux.sys is found by a map of the
 // sectors it occupies, written when SYSLINUX was installed; a replacement
